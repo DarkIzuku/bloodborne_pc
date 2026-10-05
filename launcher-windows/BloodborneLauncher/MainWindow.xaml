@@ -456,7 +456,8 @@
                                     <CheckBox x:Name="FrameStatsCheck" Content="Frame statistics" />
                                     <CheckBox x:Name="AudioStatsCheck" Content="Audio statistics" />
                                     <CheckBox x:Name="FsrProfileCheck" Content="FSR 4 profiling" />
-                                    <TextBlock TextWrapping="Wrap" Text="These switches add diagnostic environment variables and may reduce performance." Foreground="#B57B7D" Margin="0,10,0,0" />
+                                    <TextBlock TextWrapping="Wrap" Text="Every game session is saved automatically to the logs folder. These switches add extra diagnostic output and may reduce performance." Foreground="#B57B7D" Margin="0,10,0,0" />
+                                    <Button Content="Open Logs Folder" Width="180" HorizontalAlignment="Left" Margin="0,16,0,0" Padding="14,8" Click="OpenLogs_Click" ToolTip="Open the folder containing bbport session logs" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
