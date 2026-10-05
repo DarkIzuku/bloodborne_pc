@@ -16,9 +16,5 @@ if not exist "%BB_PYTHON%" (
     )
     exit /b 1
 )
-if defined BB_LOG_FILE (
-    "%BB_PYTHON%" "%~dp0scripts\run_windows.py" %* >>"%BB_LOG_FILE%" 2>&1
-) else (
-    "%BB_PYTHON%" "%~dp0scripts\run_windows.py" %*
-)
+"%BB_PYTHON%" "%~dp0scripts\run_windows.py" %*
 exit /b %ERRORLEVEL%
