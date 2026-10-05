@@ -1,0 +1,326 @@
+<Window x:Class="BloodborneLauncher.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Bloodborne PC" Width="1440" Height="860" MinWidth="1100" MinHeight="700"
+        WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="CanResizeWithGrip"
+        Background="#080A0C">
+    <Window.Resources>
+        <Style x:Key="CardStyle" TargetType="Border">
+            <Setter Property="Background" Value="#E0131619"/>
+            <Setter Property="BorderBrush" Value="#30353A"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="7"/>
+            <Setter Property="Padding" Value="16"/>
+        </Style>
+        <Style x:Key="SectionTitle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="#AEB4BA"/>
+            <Setter Property="Margin" Value="0,0,0,10"/>
+        </Style>
+        <Style x:Key="PlayButton" TargetType="Button">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Background" Value="#A11F24"/>
+            <Setter Property="BorderBrush" Value="#D34449"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontFamily" Value="Georgia"/>
+            <Setter Property="FontSize" Value="24"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="28,15"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+        <Style x:Key="StatusGood" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#75CF79"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+        <Style x:Key="SmallButton" TargetType="Button">
+            <Setter Property="Foreground" Value="#EAEAEA"/>
+            <Setter Property="Background" Value="#1B1F23"/>
+            <Setter Property="BorderBrush" Value="#3B4248"/>
+            <Setter Property="Padding" Value="12,7"/>
+            <Setter Property="Cursor" Value="Hand"/>
+        </Style>
+    </Window.Resources>
+
+    <Border BorderBrush="#353A40" BorderThickness="1" CornerRadius="8" Background="#0B0D0F">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="52"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="38"/>
+            </Grid.RowDefinitions>
+
+            <!-- Custom title bar -->
+            <Grid Grid.Row="0" Background="#101316" MouseLeftButtonDown="TitleBar_MouseLeftButtonDown">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="280"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="150"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="22,0">
+                    <TextBlock Text="◆" Foreground="#B92A30" FontSize="24" Margin="0,0,12,0"/>
+                    <TextBlock Text="BLOODBORNE" FontFamily="Georgia" FontSize="22" FontWeight="SemiBold"/>
+                    <TextBlock Text="  PC" FontFamily="Georgia" FontSize="22" Foreground="#D54449"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="—" Width="48" Background="Transparent" Foreground="#CCC" BorderThickness="0" Click="Minimize_Click"/>
+                    <Button Content="□" Width="48" Background="Transparent" Foreground="#CCC" BorderThickness="0" Click="Maximize_Click"/>
+                    <Button Content="×" Width="48" Background="Transparent" Foreground="#EEE" BorderThickness="0" Click="Close_Click"/>
+                </StackPanel>
+            </Grid>
+
+            <Grid Grid.Row="1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="250"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Sidebar -->
+                <Border Grid.Column="0" Background="#0D1013" BorderBrush="#272C31" BorderThickness="0,0,1,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="170"/>
+                        </Grid.RowDefinitions>
+                        <StackPanel>
+                            <Button x:Name="NavHome" Style="{StaticResource NavButton}" Tag="active" Content="▶   Play" CommandParameter="Home" Click="Nav_Click"/>
+                            <Button x:Name="NavGeneral" Style="{StaticResource NavButton}" Content="⚙   General" CommandParameter="General" Click="Nav_Click"/>
+                            <Button x:Name="NavGraphics" Style="{StaticResource NavButton}" Content="▣   Graphics" CommandParameter="Graphics" Click="Nav_Click"/>
+                            <Button x:Name="NavPerformance" Style="{StaticResource NavButton}" Content="▥   Performance" CommandParameter="Performance" Click="Nav_Click"/>
+                            <Button x:Name="NavController" Style="{StaticResource NavButton}" Content="⌁   Controller" CommandParameter="Controller" Click="Nav_Click"/>
+                            <Button x:Name="NavMods" Style="{StaticResource NavButton}" Content="◇   Mods" CommandParameter="Mods" Click="Nav_Click"/>
+                            <Button x:Name="NavAdvanced" Style="{StaticResource NavButton}" Content="⚒   Advanced" CommandParameter="Advanced" Click="Nav_Click"/>
+                        </StackPanel>
+                        <Border Grid.Row="1" Margin="18" Background="#111519" BorderBrush="#292F34" BorderThickness="1" CornerRadius="6" Padding="14">
+                            <StackPanel>
+                                <TextBlock Text="OFFLINE DEVELOPMENT" Foreground="#B4B9BE" FontSize="11" FontWeight="Bold"/>
+                                <TextBlock Text="Multiplayer disabled" Foreground="#D66A6F" Margin="0,7,0,0"/>
+                                <TextBlock x:Name="BranchText" Text="seamless-dev" Foreground="#737B83" FontSize="11" Margin="0,5,0,0"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Border>
+
+                <Grid Grid.Column="1" Background="#090B0D">
+                    <!-- HOME -->
+                    <Grid x:Name="HomePage">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="210"/>
+                        </Grid.RowDefinitions>
+                        <Grid>
+                            <Border Background="#0C0F11"/>
+                            <Image x:Name="HeroImage" Stretch="UniformToFill" Opacity="0.56"/>
+                            <Rectangle>
+                                <Rectangle.Fill>
+                                    <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                                        <GradientStop Color="#E80A0C0E" Offset="0"/>
+                                        <GradientStop Color="#B30A0C0E" Offset="0.48"/>
+                                        <GradientStop Color="#300A0C0E" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Rectangle.Fill>
+                            </Rectangle>
+                            <Grid Margin="34,28">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="520"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Top">
+                                    <TextBlock Text="BLOODBORNE PC" FontFamily="Georgia" FontSize="30" FontWeight="SemiBold"/>
+                                    <TextBlock Text="Native Windows runtime · Offline Stability Build" Foreground="#9299A0" Margin="0,5,0,20"/>
+                                    <Border Style="{StaticResource CardStyle}">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="190"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="34"/><RowDefinition Height="34"/><RowDefinition Height="34"/>
+                                                <RowDefinition Height="34"/><RowDefinition Height="34"/><RowDefinition Height="34"/>
+                                                <RowDefinition Height="34"/><RowDefinition Height="34"/>
+                                            </Grid.RowDefinitions>
+                                            <TextBlock Text="Game Version"/><TextBlock Grid.Column="1" x:Name="GameVersionStatus" Text="Not configured" Foreground="#D26B70"/>
+                                            <TextBlock Grid.Row="1" Text="Game Path"/><TextBlock Grid.Row="1" Grid.Column="1" x:Name="GamePathStatus" Text="Select Bloodborne folder" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Grid.Row="2" Text="GPU"/><TextBlock Grid.Row="2" Grid.Column="1" x:Name="GpuStatus" Text="Detecting..."/>
+                                            <TextBlock Grid.Row="3" Text="Renderer"/><TextBlock Grid.Row="3" Grid.Column="1" Text="Vulkan" Style="{StaticResource StatusGood}"/>
+                                            <TextBlock Grid.Row="4" Text="DLSS"/><TextBlock Grid.Row="4" Grid.Column="1" x:Name="DlssStatus" Text="Checking..."/>
+                                            <TextBlock Grid.Row="5" Text="FSR 3.1"/><TextBlock Grid.Row="5" Grid.Column="1" Text="Available" Style="{StaticResource StatusGood}"/>
+                                            <TextBlock Grid.Row="6" Text="FSR 4"/><TextBlock Grid.Row="6" Grid.Column="1" x:Name="Fsr4Status" Text="Checking..."/>
+                                            <TextBlock Grid.Row="7" Text="Runtime"/><TextBlock Grid.Row="7" Grid.Column="1" x:Name="RuntimeStatus" Text="Checking..."/>
+                                        </Grid>
+                                    </Border>
+                                    <Button x:Name="PlayButton" Style="{StaticResource PlayButton}" Content="PLAY BLOODBORNE   ›" Margin="0,22,0,0" Click="Play_Click"/>
+                                    <TextBlock x:Name="PlayHint" Foreground="#8A9198" Margin="2,8,0,0" Text="Select a valid 1.09 dump before playing."/>
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+
+                        <Border Grid.Row="1" Background="#0E1114" BorderBrush="#252A2F" BorderThickness="0,1,0,0" Padding="28,18">
+                            <StackPanel>
+                                <DockPanel Margin="0,0,0,10">
+                                    <TextBlock Text="QUICK SETTINGS" FontSize="12" FontWeight="Bold" Foreground="#A4ABB1"/>
+                                    <Button Content="Save settings" DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Click="Save_Click"/>
+                                </DockPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Style="{StaticResource CardStyle}" Margin="0,0,8,0"><StackPanel><TextBlock Text="Resolution" Foreground="#9DA4AA"/><ComboBox x:Name="QuickResolution" Margin="0,8,0,0" SelectionChanged="QuickResolution_Changed"><ComboBoxItem Content="1280x720"/><ComboBoxItem Content="1920x1080"/><ComboBoxItem Content="2560x1440"/><ComboBoxItem Content="3840x2160"/></ComboBox></StackPanel></Border>
+                                    <Border Grid.Column="1" Style="{StaticResource CardStyle}" Margin="0,0,8,0"><StackPanel><TextBlock Text="Display" Foreground="#9DA4AA"/><ComboBox x:Name="QuickDisplay" Margin="0,8,0,0" SelectionChanged="QuickDisplay_Changed"><ComboBoxItem Content="Borderless Fullscreen"/><ComboBoxItem Content="Windowed"/></ComboBox></StackPanel></Border>
+                                    <Border Grid.Column="2" Style="{StaticResource CardStyle}" Margin="0,0,8,0"><StackPanel><TextBlock Text="Upscaler" Foreground="#9DA4AA"/><ComboBox x:Name="QuickUpscaler" Margin="0,8,0,0" SelectionChanged="QuickUpscaler_Changed"><ComboBoxItem Content="DLSS"/><ComboBoxItem Content="FSR 4.1.1"/><ComboBoxItem Content="FSR 4 v07"/><ComboBoxItem Content="FSR 3.1"/><ComboBoxItem Content="TAA"/><ComboBoxItem Content="Off"/></ComboBox></StackPanel></Border>
+                                    <Border Grid.Column="3" Style="{StaticResource CardStyle}" Margin="0,0,8,0"><StackPanel><TextBlock Text="Quality" Foreground="#9DA4AA"/><ComboBox x:Name="QuickPreset" Margin="0,8,0,0" SelectionChanged="QuickPreset_Changed"><ComboBoxItem Content="Native AA"/><ComboBoxItem Content="Quality"/><ComboBoxItem Content="Balanced"/><ComboBoxItem Content="Performance"/><ComboBoxItem Content="Ultra Performance"/></ComboBox></StackPanel></Border>
+                                    <Border Grid.Column="4" Style="{StaticResource CardStyle}"><StackPanel><TextBlock Text="Target FPS" Foreground="#9DA4AA"/><ComboBox x:Name="QuickFps" Margin="0,8,0,0" SelectionChanged="QuickFps_Changed"><ComboBoxItem Content="30"/><ComboBoxItem Content="60"/><ComboBoxItem Content="90"/><ComboBoxItem Content="Unlimited"/></ComboBox></StackPanel></Border>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <!-- GENERAL -->
+                    <ScrollViewer x:Name="GeneralPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="38" MaxWidth="900" HorizontalAlignment="Left">
+                            <TextBlock Text="General" FontFamily="Georgia" FontSize="30"/>
+                            <TextBlock Text="Game installation and language" Foreground="#899198" Margin="0,4,0,24"/>
+                            <Border Style="{StaticResource CardStyle}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource SectionTitle}" Text="GAME INSTALLATION"/>
+                                    <TextBlock Text="Bloodborne folder"/>
+                                    <DockPanel Margin="0,7,0,14">
+                                        <Button DockPanel.Dock="Right" Content="Browse" Style="{StaticResource SmallButton}" Margin="8,0,0,0" Click="BrowseGame_Click"/>
+                                        <TextBox x:Name="PathBox" IsReadOnly="True"/>
+                                    </DockPanel>
+                                    <TextBlock x:Name="PathValidationText" Foreground="#9CA3A9" Text="Choose the folder containing eboot.bin and sce_sys."/>
+                                    <TextBlock Text="Language" Margin="0,18,0,6"/>
+                                    <ComboBox x:Name="LanguageCombo" Width="260" HorizontalAlignment="Left">
+                                        <ComboBoxItem Content="Japanese" Tag="0"/><ComboBoxItem Content="English" Tag="1"/>
+                                        <ComboBoxItem Content="French" Tag="2"/><ComboBoxItem Content="Spanish" Tag="3"/>
+                                        <ComboBoxItem Content="German" Tag="4"/><ComboBoxItem Content="Italian" Tag="5"/>
+                                        <ComboBoxItem Content="Russian" Tag="8"/>
+                                    </ComboBox>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- GRAPHICS -->
+                    <ScrollViewer x:Name="GraphicsPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="38" MaxWidth="980" HorizontalAlignment="Left">
+                            <TextBlock Text="Graphics" FontFamily="Georgia" FontSize="30"/>
+                            <TextBlock Text="Output, upscaling and image effects" Foreground="#899198" Margin="0,4,0,24"/>
+                            <UniformGrid Columns="2">
+                                <Border Style="{StaticResource CardStyle}" Margin="0,0,10,10">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource SectionTitle}" Text="DISPLAY"/>
+                                        <TextBlock Text="Output resolution"/><ComboBox x:Name="ResolutionCombo" Margin="0,6,0,12"><ComboBoxItem Content="1280x720"/><ComboBoxItem Content="1920x1080"/><ComboBoxItem Content="2560x1440"/><ComboBoxItem Content="3840x2160"/></ComboBox>
+                                        <TextBlock Text="Present mode"/><ComboBox x:Name="PresentCombo" Margin="0,6,0,12"><ComboBoxItem Content="Mailbox (default)" Tag=""/><ComboBoxItem Content="FIFO (VSync)" Tag="Fifo"/><ComboBoxItem Content="FIFO Relaxed" Tag="FifoRelaxed"/><ComboBoxItem Content="Immediate (tearing)" Tag="Immediate"/></ComboBox>
+                                        <CheckBox x:Name="FullscreenCheck" Content="Borderless fullscreen"/>
+                                        <CheckBox x:Name="ShowFpsCheck" Content="Show FPS counter"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,10">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource SectionTitle}" Text="UPSCALING"/>
+                                        <TextBlock Text="Provider"/><ComboBox x:Name="UpscalerCombo" Margin="0,6,0,12"><ComboBoxItem Content="DLSS" Tag="dlss"/><ComboBoxItem Content="FSR 4.1.1" Tag="fsr411"/><ComboBoxItem Content="FSR 4 v07 (legacy)" Tag="fsr4"/><ComboBoxItem Content="FSR 3.1" Tag="fsr3"/><ComboBoxItem Content="TAA" Tag="taa"/><ComboBoxItem Content="Off" Tag="off"/></ComboBox>
+                                        <TextBlock Text="Quality preset"/><ComboBox x:Name="PresetCombo" Margin="0,6,0,12"><ComboBoxItem Content="Native AA" Tag="0"/><ComboBoxItem Content="Quality" Tag="1"/><ComboBoxItem Content="Balanced" Tag="2"/><ComboBoxItem Content="Performance" Tag="3"/><ComboBoxItem Content="Ultra Performance" Tag="4"/></ComboBox>
+                                        <CheckBox x:Name="SharpenCheck" Content="RCAS sharpening"/>
+                                        <TextBlock Text="Live resolution changes" Margin="0,12,0,6"/><ComboBox x:Name="LiveResolutionCombo"><ComboBoxItem Content="Off (faster)" Tag="0"/><ComboBoxItem Content="Auto" Tag="auto"/><ComboBoxItem Content="On" Tag="1"/></ComboBox>
+                                    </StackPanel>
+                                </Border>
+                            </UniformGrid>
+                            <Border Style="{StaticResource CardStyle}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource SectionTitle}" Text="EFFECTS"/>
+                                    <WrapPanel>
+                                        <CheckBox x:Name="ChromaticCheck" Content="Chromatic aberration" Width="230"/>
+                                        <CheckBox x:Name="DofCheck" Content="Depth of field" Width="230"/>
+                                        <CheckBox x:Name="MotionBlurCheck" Content="Motion blur" Width="230"/>
+                                        <CheckBox x:Name="SsaoCheck" Content="SSAO" Width="230"/>
+                                        <CheckBox x:Name="GameAaCheck" Content="Game anti-aliasing" Width="230"/>
+                                        <CheckBox x:Name="ShadowsCheck" Content="Dynamic shadows" Width="230"/>
+                                        <CheckBox x:Name="SsrCheck" Content="SSR reflections" Width="230"/>
+                                        <CheckBox x:Name="SkipIntroCheck" Content="Skip intro videos" Width="230"/>
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- PERFORMANCE -->
+                    <ScrollViewer x:Name="PerformancePage" Visibility="Collapsed">
+                        <StackPanel Margin="38" MaxWidth="900" HorizontalAlignment="Left">
+                            <TextBlock Text="Performance" FontFamily="Georgia" FontSize="30"/>
+                            <TextBlock Text="Frame rate and model detail" Foreground="#899198" Margin="0,4,0,24"/>
+                            <Border Style="{StaticResource CardStyle}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource SectionTitle}" Text="FRAME RATE"/>
+                                    <ComboBox x:Name="FpsCombo" Width="280" HorizontalAlignment="Left"><ComboBoxItem Content="30 FPS" Tag="30"/><ComboBoxItem Content="60 FPS" Tag="60"/><ComboBoxItem Content="90 FPS" Tag="90"/><ComboBoxItem Content="Unlimited" Tag="uncap"/></ComboBox>
+                                    <TextBlock Text="Custom FPS will be enabled after the timing patch is generalized." Foreground="#7F878E" Margin="0,8,0,22"/>
+                                    <TextBlock Style="{StaticResource SectionTitle}" Text="MODEL DETAIL"/>
+                                    <ComboBox x:Name="ModelLodCombo" Width="280" HorizontalAlignment="Left"><ComboBoxItem Content="Highest" Tag="-2"/><ComboBoxItem Content="As in the game" Tag="0"/><ComboBoxItem Content="Lower" Tag="1"/><ComboBoxItem Content="Lowest" Tag="2"/></ComboBox>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- CONTROLLER -->
+                    <ScrollViewer x:Name="ControllerPage" Visibility="Collapsed">
+                        <StackPanel Margin="38" MaxWidth="900" HorizontalAlignment="Left">
+                            <TextBlock Text="Controller" FontFamily="Georgia" FontSize="30"/>
+                            <TextBlock Text="SDL gamepad selection" Foreground="#899198" Margin="0,4,0,24"/>
+                            <Border Style="{StaticResource CardStyle}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource SectionTitle}" Text="ACTIVE CONTROLLER"/>
+                                    <ComboBox x:Name="ControllerCombo" Width="360" HorizontalAlignment="Left"><ComboBoxItem Content="Automatic (first gamepad)" Tag="0"/><ComboBoxItem Content="Gamepad 2" Tag="1"/><ComboBoxItem Content="Gamepad 3" Tag="2"/><ComboBoxItem Content="Gamepad 4" Tag="3"/></ComboBox>
+                                    <TextBlock Text="The selected SDL index is passed to the runtime. Hot-plug remains automatic." Foreground="#7F878E" Margin="0,10,0,0"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- MODS -->
+                    <ScrollViewer x:Name="ModsPage" Visibility="Collapsed">
+                        <StackPanel Margin="38" MaxWidth="900" HorizontalAlignment="Left">
+                            <TextBlock Text="Mods" FontFamily="Georgia" FontSize="30"/>
+                            <TextBlock Text="bbport mod overlay" Foreground="#899198" Margin="0,4,0,24"/>
+                            <Border Style="{StaticResource CardStyle}">
+                                <StackPanel>
+                                    <CheckBox x:Name="ModsEnabledCheck" Content="Enable mods"/>
+                                    <TextBlock Text="Mods folder" Margin="0,14,0,5"/>
+                                    <TextBlock x:Name="ModsFolderText" Foreground="#A7AFB6"/>
+                                    <Button Content="Open Mods Folder" Width="170" HorizontalAlignment="Left" Margin="0,12,0,0" Style="{StaticResource SmallButton}" Click="OpenMods_Click"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <!-- ADVANCED -->
+                    <ScrollViewer x:Name="AdvancedPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                        <StackPanel Margin="38" MaxWidth="900" HorizontalAlignment="Left">
+                            <TextBlock Text="Advanced" FontFamily="Georgia" FontSize="30"/>
+                            <TextBlock Text="Developer and diagnostics options" Foreground="#899198" Margin="0,4,0,24"/>
+                            <Border Style="{StaticResource CardStyle}">
+                                <StackPanel>
+                                    <CheckBox x:Name="DeveloperModeCheck" Content="Developer Mode"/>
+                                    <CheckBox x:Name="DetailedLogsCheck" Content="Detailed logs"/>
+                                    <CheckBox x:Name="FrameStatsCheck" Content="Frame statistics"/>
+                                    <CheckBox x:Name="AudioStatsCheck" Content="Audio statistics"/>
+                                    <CheckBox x:Name="FsrProfileCheck" Content="FSR 4 profiling"/>
+                                    <TextBlock Text="These switches add diagnostic environment variables and may reduce performance." Foreground="#B57B7D" Margin="0,10,0,0"/>
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </Grid>
+
+            <Grid Grid.Row="2" Background="#0D1013" Margin="1,0,1,1">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="18,0">
+                    <TextBlock Text="Build v0.1.0" Foreground="#879098"/>
+                    <TextBlock Text="   |   Vulkan" Foreground="#879098"/>
+                    <TextBlock x:Name="FooterGpu" Text="   |   GPU detecting..." Foreground="#879098"/>
+                    <TextBlock x:Name="FooterFps" Text="   |   60 FPS" Foreground="#879098"/>
+                    <TextBlock x:Name="FooterMessage" Text="" Foreground="#B6BDC3" Margin="20,0,0,0"/>
+                </StackPanel>
+            </Grid>
+        </Grid>
+    </Border>
+</Window>
