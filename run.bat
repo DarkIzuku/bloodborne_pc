@@ -9,8 +9,16 @@ rem prebuilt Bloodborne PC package does not require MSYS2 on the player's machin
 set "BB_PYTHON=%~dp0tools\python\python.exe"
 if not exist "%BB_PYTHON%" set "BB_PYTHON=%BB_MSYS2%\clang64\bin\python.exe"
 if not exist "%BB_PYTHON%" (
-    echo Python runtime not found. Use the packaged build, or install MSYS2 and set BB_MSYS2.
+    if defined BB_LOG_FILE (
+        >>"%BB_LOG_FILE%" echo Python runtime not found. Use the packaged build, or install MSYS2 and set BB_MSYS2.
+    ) else (
+        echo Python runtime not found. Use the packaged build, or install MSYS2 and set BB_MSYS2.
+    )
     exit /b 1
 )
-"%BB_PYTHON%" "%~dp0scripts\run_windows.py" %*
+if defined BB_LOG_FILE (
+    "%BB_PYTHON%" "%~dp0scripts\run_windows.py" %* >>"%BB_LOG_FILE%" 2>&1
+) else (
+    "%BB_PYTHON%" "%~dp0scripts\run_windows.py" %*
+)
 exit /b %ERRORLEVEL%
