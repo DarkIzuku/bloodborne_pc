@@ -56,6 +56,7 @@ public partial class MainWindow : Window
         ModsFolderText.Text = Path.Combine(root, "mods");
         LoadState();
         ApplyStateToUi();
+        InitializePresentation();
         LoadHeroImage();
         RefreshStatus();
     }
@@ -306,6 +307,7 @@ public partial class MainWindow : Window
 
     void LoadHeroImage()
     {
+        HeroImage.Source = new BitmapImage(new Uri("pack://application:,,,/BloodborneLauncher;component/Assets/hunter-background.png"));
         string game = PathBox.Text.Trim();
         string[] candidates =
         {
@@ -409,6 +411,7 @@ public partial class MainWindow : Window
         foreach (var b in new[] { NavHome, NavGeneral, NavGraphics, NavPerformance, NavController, NavMods, NavAdvanced }) b.Tag = null;
         button.Tag = "active";
         HomePage.Visibility = page == "Home" ? Visibility.Visible : Visibility.Collapsed;
+        SettingsScrim.Visibility = page == "Home" ? Visibility.Collapsed : Visibility.Visible;
         GeneralPage.Visibility = page == "General" ? Visibility.Visible : Visibility.Collapsed;
         GraphicsPage.Visibility = page == "Graphics" ? Visibility.Visible : Visibility.Collapsed;
         PerformancePage.Visibility = page == "Performance" ? Visibility.Visible : Visibility.Collapsed;
@@ -435,7 +438,7 @@ public partial class MainWindow : Window
     }
     void QuickPreset_Changed(object sender, SelectionChangedEventArgs e)
     {
-        if (syncing && QuickPreset.SelectedIndex < 0) return;
+        if (syncing || QuickPreset.SelectedIndex < 0) return;
         if (QuickPreset.SelectedIndex >= 0) SetComboTag(PresetCombo, QuickPreset.SelectedIndex.ToString());
     }
     void QuickFps_Changed(object sender, SelectionChangedEventArgs e)

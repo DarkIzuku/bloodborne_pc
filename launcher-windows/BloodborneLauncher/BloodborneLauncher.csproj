@@ -7,5 +7,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>BloodborneLauncher</AssemblyName>
     <RootNamespace>BloodborneLauncher</RootNamespace>
+    <ApplicationIcon>Assets/bloodborne.ico</ApplicationIcon>
   </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets/*.png" />
+    <Resource Include="Assets/bloodborne.ico" />
+  </ItemGroup>
 </Project>
