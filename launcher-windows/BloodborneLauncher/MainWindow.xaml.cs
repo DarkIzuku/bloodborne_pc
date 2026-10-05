@@ -306,11 +306,15 @@ public partial class MainWindow : Window
 
     void LoadHeroImage()
     {
+        string game = PathBox.Text.Trim();
         string[] candidates =
         {
+            Path.Combine(game, "sce_sys", "pic1.png"),
+            Path.Combine(game, "sce_sys", "pic0.png"),
             Path.Combine(root, "assets", "hero.jpg"),
             Path.Combine(root, "launcher-assets", "hero.jpg"),
-            Path.Combine(AppContext.BaseDirectory, "assets", "hero.jpg")
+            Path.Combine(AppContext.BaseDirectory, "assets", "hero.jpg"),
+            Path.Combine(game, "sce_sys", "icon0.png")
         };
         foreach (string path in candidates)
         {
@@ -386,6 +390,7 @@ public partial class MainWindow : Window
         {
             PathBox.Text = dialog.FolderName;
             state.GamePath = dialog.FolderName;
+            LoadHeroImage();
             RefreshStatus();
         }
     }
