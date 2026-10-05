@@ -64,3 +64,8 @@ and game dump on the reviewer's machine.
 Validation for this revision: Release build (zero warnings/errors), self-contained Windows x64
 publish, isolated executable startup, all 116 assertions, and visual review of the generated
 pages/dropdown/compact previews.
+
+
+## Integration
+
+Integrated into `seamless-dev` for the Windows offline test build.
