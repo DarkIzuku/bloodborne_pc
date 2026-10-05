@@ -68,7 +68,14 @@ jobs:
 
       - name: Fetch FSR 4 v07 assets
         shell: msys2 {0}
-        run: bash tools/fetch_fsr4_assets.sh
+        run: |
+          set +e
+          bash tools/fetch_fsr4_assets.sh
+          fetch_status=$?
+          set -e
+          count=$(find fsr4_shaders -type f 2>/dev/null | wc -l)
+          echo "FSR4 asset files: $count (fetch/optimizer status: $fetch_status)"
+          test "$count" -ge 180
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
