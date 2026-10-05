@@ -8,6 +8,8 @@ out/bb-probe.exe. Same environment variables and bbport.ini settings as run.sh.
 The game folder: --game-dir, else BB_GAME_DIR, else the last one used (out/game_dir.txt), else
 ../CUSA03173 (as run.sh). Unless BB_PREBUILT=1
 the port is (re)built first through MSYS2 (build.sh in the CLANG64 environment)."""
+import atexit
+from datetime import datetime
 import os
 from pathlib import Path
 import shlex
@@ -18,6 +20,26 @@ from mods import remove_overlay
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / 'scripts'
 PYTHON = sys.executable
+LOG_STREAM = None
+
+
+def init_session_log():
+    """Route launcher/runtime diagnostics to BB_LOG_FILE when the GUI launcher supplies one."""
+    global LOG_STREAM
+    path = os.environ.get('BB_LOG_FILE')
+    if not path:
+        return
+    log_path = Path(path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    LOG_STREAM = log_path.open('a', encoding='utf-8', errors='backslashreplace', buffering=1)
+    atexit.register(LOG_STREAM.close)
+    sys.stdout = LOG_STREAM
+    sys.stderr = LOG_STREAM
+    print('=' * 80)
+    print(f'Bloodborne PC session log started: {datetime.now().isoformat(timespec="seconds")}')
+    print(f'Launcher root: {ROOT}')
+    print(f'Log file: {log_path.resolve()}')
+    print('=' * 80, flush=True)
 
 
 def msys_root():
@@ -25,9 +47,22 @@ def msys_root():
 
 
 def run(arguments, capture=False, check=True, env=None):
-    result = subprocess.run([str(a) for a in arguments], cwd=ROOT, env=env,
-                            stdout=subprocess.PIPE if capture else None, text=True)
+    result = subprocess.run(
+        [str(a) for a in arguments],
+        cwd=ROOT,
+        env=env,
+        stdout=subprocess.PIPE if capture else LOG_STREAM,
+        stderr=LOG_STREAM,
+        text=True,
+    )
+    if capture and LOG_STREAM is not None and result.stdout:
+        LOG_STREAM.write(result.stdout)
+        if not result.stdout.endswith('\n'):
+            LOG_STREAM.write('\n')
+        LOG_STREAM.flush()
     if check and result.returncode:
+        print(f'Command failed with exit code {result.returncode}: '
+              f'{" ".join(shlex.quote(str(a)) for a in arguments)}', flush=True)
         sys.exit(result.returncode)
     return result.stdout.strip() if capture else result.returncode
 
@@ -128,9 +163,15 @@ def main():
         os.environ['PATH'] = os.pathsep.join([str(msys_root() / 'clang64/bin'), os.environ.get('PATH', '')])
         print('Starting:', ' '.join(shlex.quote(str(c)) for c in command), flush=True)
         try:
-            status = subprocess.call([str(c) for c in command], cwd=ROOT)
+            status = subprocess.call(
+                [str(c) for c in command],
+                cwd=ROOT,
+                stdout=LOG_STREAM,
+                stderr=LOG_STREAM,
+            )
         except KeyboardInterrupt:
             status = 130
+        print(f'bb-probe exited with code {status}', flush=True)
         return status
     finally:
         if overlay:
@@ -138,4 +179,5 @@ def main():
 
 
 if __name__ == '__main__':
+    init_session_log()
     sys.exit(main())
