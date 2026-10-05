@@ -1,0 +1,57 @@
+<Application x:Class="BloodborneLauncher.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="MainWindow.xaml">
+    <Application.Resources>
+        <SolidColorBrush x:Key="BgBrush" Color="#0C0E10"/>
+        <SolidColorBrush x:Key="PanelBrush" Color="#D9121518"/>
+        <SolidColorBrush x:Key="Panel2Brush" Color="#E0181C20"/>
+        <SolidColorBrush x:Key="TextBrush" Color="#E7E7E7"/>
+        <SolidColorBrush x:Key="MutedBrush" Color="#9DA4AC"/>
+        <SolidColorBrush x:Key="AccentBrush" Color="#A9262A"/>
+        <SolidColorBrush x:Key="AccentHoverBrush" Color="#C93439"/>
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+        </Style>
+        <Style TargetType="Button" x:Key="NavButton">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+            <Setter Property="Padding" Value="22,14"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="B" Background="{TemplateBinding Background}" BorderBrush="#292D31" BorderThickness="0,0,0,1">
+                            <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="B" Property="Background" Value="#27171A1D"/></Trigger>
+                            <Trigger Property="Tag" Value="active"><Setter TargetName="B" Property="Background" Value="#3AA9262A"/><Setter TargetName="B" Property="BorderBrush" Value="#A9262A"/></Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="ComboBox">
+            <Setter Property="Foreground" Value="#EEEEEE"/>
+            <Setter Property="Background" Value="#171A1E"/>
+            <Setter Property="BorderBrush" Value="#343A40"/>
+            <Setter Property="Padding" Value="8,5"/>
+            <Setter Property="MinHeight" Value="34"/>
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="#E6E6E6"/>
+            <Setter Property="Margin" Value="0,5"/>
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Foreground" Value="#EEEEEE"/>
+            <Setter Property="Background" Value="#15181B"/>
+            <Setter Property="BorderBrush" Value="#343A40"/>
+            <Setter Property="Padding" Value="8,6"/>
+        </Style>
+    </Application.Resources>
+</Application>
