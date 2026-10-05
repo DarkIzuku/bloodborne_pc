@@ -1,0 +1,137 @@
+name: Windows Offline Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - seamless-dev
+    paths:
+      - "src/**"
+      - "gpu/**"
+      - "scripts/**"
+      - "tools/**"
+      - "launcher-windows/**"
+      - "build.sh"
+      - "run.bat"
+      - ".github/workflows/windows-offline-build.yml"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup MSYS2 CLANG64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: true
+          install: >-
+            git
+            curl
+            mingw-w64-clang-x86_64-clang
+            mingw-w64-clang-x86_64-lld
+            mingw-w64-clang-x86_64-libc++
+            mingw-w64-clang-x86_64-cmake
+            mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-pkgconf
+            mingw-w64-clang-x86_64-python
+            mingw-w64-clang-x86_64-sdl3
+            mingw-w64-clang-x86_64-boost
+            mingw-w64-clang-x86_64-fmt
+            mingw-w64-clang-x86_64-glslang
+            mingw-w64-clang-x86_64-spirv-cross
+            mingw-w64-clang-x86_64-spirv-headers
+            mingw-w64-clang-x86_64-vulkan-headers
+            mingw-w64-clang-x86_64-vulkan-loader
+            mingw-w64-clang-x86_64-vulkan-memory-allocator
+            mingw-w64-clang-x86_64-xxhash
+            mingw-w64-clang-x86_64-zydis
+            mingw-w64-clang-x86_64-robin-map
+            mingw-w64-clang-x86_64-ffmpeg
+
+      - name: Build bbport runtime
+        shell: msys2 {0}
+        run: |
+          export CC=clang
+          export CXX=clang++
+          bash build.sh
+
+      - name: Fetch DLSS 310.9.1
+        shell: msys2 {0}
+        run: bash tools/fetch_dlss.sh out
+
+      - name: Fetch FSR 4 v07 assets
+        shell: msys2 {0}
+        run: bash tools/fetch_fsr4_assets.sh
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Publish launcher
+        shell: pwsh
+        run: dotnet publish launcher-windows/BloodborneLauncher/BloodborneLauncher.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o launcher-publish
+
+      - name: Setup portable Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download embeddable Python
+        shell: pwsh
+        run: |
+          $ver = python -c "import platform; print(platform.python_version())"
+          $url = "https://www.python.org/ftp/python/$ver/python-$ver-embed-amd64.zip"
+          New-Item -ItemType Directory -Force -Path package/tools/python | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile python-embed.zip
+          Expand-Archive python-embed.zip -DestinationPath package/tools/python -Force
+          $pth = Get-ChildItem package/tools/python/python*._pth | Select-Object -First 1
+          if ($pth) { Add-Content $pth.FullName "..\..\scripts" }
+
+      - name: Assemble portable test package
+        shell: msys2 {0}
+        run: |
+          set -e
+          mkdir -p package/out package/scripts package/patches package/mods package/launcher-assets
+          cp -f launcher-publish/BloodborneLauncher.exe package/
+          cp -f run.bat build.sh setup.bat package/
+          cp -f out/bb-probe.exe out/bb-gpu-capabilities.exe package/out/
+          test ! -f out/nvngx_dlss.dll || cp -f out/nvngx_dlss.dll package/out/
+          cp -rf scripts/* package/scripts/
+          test ! -d patches || cp -rf patches/* package/patches/
+          test ! -d fsr4_shaders || cp -rf fsr4_shaders package/
+          test ! -f LICENSE || cp -f LICENSE package/
+          test ! -f README.md || cp -f README.md package/
+          copy_deps() { local exe="$1"; ldd "$exe" 2>/dev/null | awk '{print $3}' | grep -E '^/[A-Za-z]/msys64/clang64/bin/.*\.dll$|^/clang64/bin/.*\.dll$' || true; }
+          for exe in out/bb-probe.exe out/bb-gpu-capabilities.exe; do
+            while IFS= read -r dll; do [ -f "$dll" ] && cp -f "$dll" package/out/; done < <(copy_deps "$exe")
+          done
+          cat > package/README-FIRST.txt <<'EOF'
+          Bloodborne PC - Offline Stability v0.1
+
+          1. Run BloodborneLauncher.exe.
+          2. Select your own Bloodborne v1.09 game dump (folder containing eboot.bin and sce_sys).
+          3. Configure resolution, FPS and upscaler.
+          4. Press PLAY BLOODBORNE.
+
+          The launcher uses artwork from your own game sce_sys folder when available.
+          Multiplayer is intentionally disabled/not implemented in this build.
+
+          FSR 4.1.1 requires its separate asset set; this package includes FSR 4 v07,
+          FSR 3.1 and DLSS Super Resolution 310.9.1.
+          EOF
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bloodborne-PC-Offline-v0.1-${{ github.sha }}
+          path: package/
+          compression-level: 6
+          if-no-files-found: error
