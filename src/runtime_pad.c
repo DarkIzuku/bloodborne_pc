@@ -72,7 +72,7 @@ static void touch_click(PadData *d, int right) {
     d->touches[0]=(PadTouch){.x=right ? 1440 : 480,.y=471,.id=0};
 }
 
-/* Opens the first gamepad SDL knows about; called under lock. */
+/* Opens the launcher-selected SDL gamepad (BB_GAMEPAD_INDEX, default 0); called under lock. */
 static SDL_Gamepad *current_gamepad(void) {
     if (!sdl_ready) sdl_ready = SDL_WasInit(SDL_INIT_GAMEPAD) ? 1 : SDL_InitSubSystem(SDL_INIT_GAMEPAD) ? 1 : -1;
     if (sdl_ready<0) return NULL;
@@ -81,8 +81,15 @@ static SDL_Gamepad *current_gamepad(void) {
         int count=0;
         SDL_JoystickID *ids=SDL_GetGamepads(&count);
         if (ids && count>0) {
-            gamepad=SDL_OpenGamepad(ids[0]);
-            if (gamepad) { ++connected_count; printf("Runtime: gamepad connected: %s\n",SDL_GetGamepadName(gamepad)); }
+            int index=0;
+            const char *selected=getenv("BB_GAMEPAD_INDEX");
+            if (selected && *selected) index=atoi(selected);
+            if (index<0 || index>=count) index=0;
+            gamepad=SDL_OpenGamepad(ids[index]);
+            if (gamepad) {
+                ++connected_count;
+                printf("Runtime: gamepad connected: %s (index %d of %d)\n",SDL_GetGamepadName(gamepad),index,count);
+            }
         }
         SDL_free(ids);
     }
