@@ -353,10 +353,16 @@ public partial class MainWindow : Window
         }
         try
         {
+            string logsDir = Path.Combine(root, "logs");
+            Directory.CreateDirectory(logsDir);
+            string logPath = Path.Combine(logsDir, $"bbport-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.log");
+
             var psi = new ProcessStartInfo("cmd.exe")
             {
                 WorkingDirectory = root,
                 UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
                 Arguments = $"/c \"\"{runBat}\" --game-dir \"{state.GamePath}\"\""
             };
             psi.Environment["BB_PREBUILT"] = "1";
@@ -367,13 +373,15 @@ public partial class MainWindow : Window
             psi.Environment["BB_LANGUAGE"] = state.Language;
             psi.Environment["BB_GAMEPAD_INDEX"] = state.GamepadIndex.ToString();
             psi.Environment["BB_MODS_ENABLED"] = state.ModsEnabled ? "1" : "0";
+            psi.Environment["BB_LOG_FILE"] = logPath;
+            psi.Environment["PYTHONUNBUFFERED"] = "1";
             if (!string.IsNullOrEmpty(state.PresentMode)) psi.Environment["BB_PRESENT_MODE"] = state.PresentMode;
             if (state.DeveloperMode && state.DetailedLogs) psi.Environment["BB_DLSS_LOG"] = "1";
             if (state.DeveloperMode && state.FrameStats) psi.Environment["BB_FRAME_STATS"] = "1";
             if (state.DeveloperMode && state.AudioStats) psi.Environment["BB_AUDIO_STATS"] = "1";
             if (state.DeveloperMode && state.FsrProfile) psi.Environment["BB_FSR4_PROFILE"] = "1";
             Process.Start(psi);
-            FooterMessage.Text = "Bloodborne started";
+            FooterMessage.Text = $"Started · log: {Path.GetFileName(logPath)}";
         }
         catch (Exception ex)
         {
@@ -402,6 +410,13 @@ public partial class MainWindow : Window
         string mods = Path.Combine(root, "mods");
         Directory.CreateDirectory(mods);
         Process.Start(new ProcessStartInfo("explorer.exe", mods) { UseShellExecute = true });
+    }
+
+    void OpenLogs_Click(object sender, RoutedEventArgs e)
+    {
+        string logs = Path.Combine(root, "logs");
+        Directory.CreateDirectory(logs);
+        Process.Start(new ProcessStartInfo("explorer.exe", logs) { UseShellExecute = true });
     }
 
     void Nav_Click(object sender, RoutedEventArgs e)
