@@ -376,12 +376,33 @@ public partial class MainWindow : Window
             psi.Environment["BB_LOG_FILE"] = logPath;
             psi.Environment["PYTHONUNBUFFERED"] = "1";
             if (!string.IsNullOrEmpty(state.PresentMode)) psi.Environment["BB_PRESENT_MODE"] = state.PresentMode;
-            if (state.DeveloperMode && state.DetailedLogs) psi.Environment["BB_DLSS_LOG"] = "1";
+            if (state.DeveloperMode && state.DetailedLogs)
+            {
+                psi.Environment["BB_DLSS_LOG"] = "1";
+                psi.Environment["BB_IMAGE_OVERLAP_LOG"] = "1";
+            }
             if (state.DeveloperMode && state.FrameStats) psi.Environment["BB_FRAME_STATS"] = "1";
             if (state.DeveloperMode && state.AudioStats) psi.Environment["BB_AUDIO_STATS"] = "1";
             if (state.DeveloperMode && state.FsrProfile) psi.Environment["BB_FSR4_PROFILE"] = "1";
-            Process.Start(psi);
+            var gameProcess = new Process
+            {
+                StartInfo = psi,
+                EnableRaisingEvents = true
+            };
+            gameProcess.Exited += (_, _) =>
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+                    Show();
+                    WindowState = WindowState.Normal;
+                    Activate();
+                    FooterMessage.Text = "Bloodborne closed";
+                    gameProcess.Dispose();
+                });
+            };
+            gameProcess.Start();
             FooterMessage.Text = $"Started · log: {Path.GetFileName(logPath)}";
+            Hide();
         }
         catch (Exception ex)
         {
