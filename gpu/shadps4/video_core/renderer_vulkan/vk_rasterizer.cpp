@@ -1497,11 +1497,14 @@ bool Rasterizer::TexturesBindableOnHelper(const Shader::Info& stage,
         const auto& entry =
             prepared ? CachedImageDescEntry(tsharp, image_desc, prepared->image_hashes[image_index])
                      : CachedImageDescEntry(tsharp, image_desc);
-        if (entry.found_generation != generation) {
+        auto* image = texture_cache.TryGetImage(entry.found_id, entry.found_uid);
+        if (!image || False(image->flags & VideoCore::ImageFlagBits::Registered)) {
             return false;
         }
+        // Registry generation changes caused by unrelated textures do not invalidate this
+        // descriptor memo. Slot reuse is rejected by the per-image UID above.
+        const_cast<ImageDescCacheEntry&>(entry).found_generation = generation;
         VideoCore::ImageId image_id = entry.found_id;
-        auto* image = &texture_cache.GetImage(image_id);
         if (const auto depth_image_id = texture_cache.GetAssociatedDepth(*image)) {
             image_id = depth_image_id;
             image = &texture_cache.GetImage(image_id);
@@ -2203,6 +2206,8 @@ Rasterizer::ImageDescCacheEntry& Rasterizer::CachedImageDescEntry(const AmdGpu::
         entry.sharp = key;
         entry.flags = flags;
         entry.found_generation = ~0ULL;
+        entry.found_id = {};
+        entry.found_uid = 0;
         entry.view_memo = {};
     }
     return entry;
@@ -2603,6 +2608,21 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
         set.generation = ~0ull;
         std::copy_n(prepared->image_hashes, count, set.hashes.begin());
         return false;
+    }
+    if (set.generation != generation && VideoCore::ImageOverlapLogging()) {
+        static std::atomic<u64> generation_revalidated{0};
+        const u64 diag_index =
+            generation_revalidated.fetch_add(1, std::memory_order_relaxed);
+        if (diag_index < 64 || (diag_index % 1024) == 0) {
+            std::printf(
+                "TextureDiag set-generation-revalidate[%llu]: key=0x%llx old_gen=%llu "
+                "new_gen=%llu count=%u\n",
+                static_cast<unsigned long long>(diag_index),
+                static_cast<unsigned long long>(key),
+                static_cast<unsigned long long>(set.generation),
+                static_cast<unsigned long long>(generation), set.count);
+            std::fflush(stdout);
+        }
     }
     // Every image still has the backing its view belongs to and needs no refresh.
     for (u32 i = 0; i < count; ++i) {
