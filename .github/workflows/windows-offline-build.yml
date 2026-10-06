@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - seamless-dev
+      - offline-performance-precache-buildcheck
     paths:
       - "src/**"
       - "gpu/**"
@@ -61,6 +62,17 @@ jobs:
           export CC=clang
           export CXX=clang++
           bash build.sh
+
+      - name: Build and run precache regression tests
+        shell: msys2 {0}
+        run: |
+          set -e
+          ninja -C out/gpu pipeline-cache-blob-test pipeline-archive-test motion-history-test motion-shader-test image-overlap-test
+          out/gpu/pipeline-cache-blob-test.exe
+          out/gpu/pipeline-archive-test.exe
+          out/gpu/motion-history-test.exe
+          out/gpu/motion-shader-test.exe
+          out/gpu/image-overlap-test.exe
 
       - name: Fetch DLSS 310.9.1
         shell: msys2 {0}
