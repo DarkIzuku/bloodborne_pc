@@ -204,7 +204,8 @@ public:
                                               ImageId cache_img_id, bool exact_fmt);
 
     /// Creates a new image with provided image info and copies subresources from image_id
-    [[nodiscard]] ImageId ExpandImage(const ImageInfo& info, ImageId image_id);
+    [[nodiscard]] ImageId ExpandImage(const ImageInfo& info, ImageId image_id,
+                                      BindingType binding);
 
     /// Reuploads image contents.
     void RefreshImage(Image& image);
@@ -444,6 +445,7 @@ private:
         std::array<u32, 6> layout_key{};
         u64 generation = ~0ULL;
         ImageId image_id{};
+        u64 image_uid = 0;
         int view_mip = -1;
         int view_slice = -1;
     };

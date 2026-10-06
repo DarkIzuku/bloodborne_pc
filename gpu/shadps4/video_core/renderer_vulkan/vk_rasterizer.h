@@ -258,6 +258,7 @@ private:
     /// (TextureSetMemo): a hit only redoes the per-draw effects (binding flags, transitions).
     struct TextureSetEntry {
         VideoCore::ImageId id{}; ///< after the depth redirect; null descriptor when invalid
+        u64 uid = 0;             ///< rejects a SlotId reused for another Image
         vk::ImageView view;
         const void* backing = nullptr;
         VideoCore::SubresourceRange range;
@@ -369,6 +370,7 @@ private:
         // Memoized FindImage for bindings without mip overrides (TextureBindingMemo).
         u64 found_generation = ~0ULL;
         VideoCore::ImageId found_id{};
+        u64 found_uid = 0;
         VideoCore::TextureCache::ImageDesc found_desc;
         u64 pinned = 0; ///< bind_epoch of the BindTextures call referencing found_desc
         u64 last_use = 0;

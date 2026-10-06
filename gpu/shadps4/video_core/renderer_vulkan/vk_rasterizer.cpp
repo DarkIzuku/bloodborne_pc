@@ -2304,9 +2304,12 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         for (auto i = 0; i < num_bindings; i++) {
             // bbport: a plain binding (no mip override) of the same T# resolves to the same image
             // while no image was registered or unregistered.
-            if (mip_fallback_mode == Shader::MipStorageFallbackMode::None &&
-                desc_entry.found_generation == texture_cache.RegistryGeneration() &&
+            auto* memo_image =
+                texture_cache.TryGetImage(desc_entry.found_id, desc_entry.found_uid);
+            if (mip_fallback_mode == Shader::MipStorageFallbackMode::None && memo_image &&
+                True(memo_image->flags & VideoCore::ImageFlagBits::Registered) &&
                 !BbToggle::Disabled(BbToggle::TextureBindingMemo)) {
+                desc_entry.found_generation = texture_cache.RegistryGeneration();
                 desc_entry.pinned = bind_epoch;
                 auto& [image_id, _] =
                     image_bindings.emplace_back(desc_entry.found_id, &desc_entry.found_desc);
@@ -2339,13 +2342,13 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 desc.view_info.range.extent.levels = 1;
             }
 
-            const u64 generation = texture_cache.RegistryGeneration();
             image_id = texture_cache.FindImage(desc);
             if (mip_fallback_mode == Shader::MipStorageFallbackMode::None &&
-                generation == texture_cache.RegistryGeneration() &&
                 desc_entry.pinned != bind_epoch) {
-                desc_entry.found_generation = generation;
+                auto& found_image = texture_cache.GetImage(image_id);
+                desc_entry.found_generation = texture_cache.RegistryGeneration();
                 desc_entry.found_id = image_id;
+                desc_entry.found_uid = found_image.image_uid;
                 desc_entry.found_desc = desc;
                 desc_entry.view_memo = {};
             }
@@ -2403,8 +2406,8 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                     image.usage.texture = 1u;
                     image_infos.emplace_back(VK_NULL_HANDLE, proxy->view, proxy->layout);
                     if (set_ok && binding_index < resolved.size()) {
-                        resolved[binding_index] = {image_id, proxy->view, image.backing,
-                                                   desc.view_info.range, true};
+                        resolved[binding_index] = {image_id, image.image_uid, proxy->view,
+                                                   image.backing, desc.view_info.range, true};
                     }
                     ++proxy_samples;
                     continue;
@@ -2452,8 +2455,8 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             }
             image_infos.emplace_back(VK_NULL_HANDLE, view, layout);
             if (set_ok && binding_index < resolved.size()) {
-                resolved[binding_index] = {image_id, *image_view.image_view, image.backing,
-                                           desc.view_info.range};
+                resolved[binding_index] = {image_id, image.image_uid, *image_view.image_view,
+                                           image.backing, desc.view_info.range};
                 set_ok = !is_storage && !binding.force_general && !binding.is_target;
             }
         }
@@ -2557,13 +2560,11 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
     slot = &set;
     const u64 generation = texture_cache.RegistryGeneration();
     const bool match = set.key == key && set.stage == &stage && set.count == count &&
-                       set.generation == generation &&
                        set.scene_generation == scene_targets->Generation() &&
                        std::equal(set.hashes.begin(), set.hashes.begin() + count,
                                   prepared->image_hashes);
     if (!match) {
-        const bool generation_miss = set.key == key && set.stage == &stage && set.count == count &&
-                                     set.generation != generation;
+        const bool generation_miss = false;
         if (generation_miss && VideoCore::ImageOverlapLogging()) {
             static std::atomic<u64> generation_diag_count{0};
             const u64 diag_index =
@@ -2581,9 +2582,10 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
                 for (u32 i = 0; i < set.count; ++i) {
                     const auto& entry = set.entries[i];
                     std::printf(
-                        "  TextureDiag entry[%u]: image=%u backing=%p view=0x%llx "
+                        "  TextureDiag entry[%u]: image=%u uid=%llu backing=%p view=0x%llx "
                         "mip=%u+%u layer=%u+%u proxy=%u\n",
-                        i, entry.id.index, entry.backing,
+                        i, entry.id.index, static_cast<unsigned long long>(entry.uid),
+                        entry.backing,
                         static_cast<unsigned long long>(
                             reinterpret_cast<uintptr_t>(static_cast<VkImageView>(entry.view))),
                         entry.range.base.level, entry.range.extent.levels,
@@ -2593,7 +2595,7 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
                 std::fflush(stdout);
             }
         }
-        ++texture_set_why[set.key != key ? 0 : set.generation != generation ? 1 : 3];
+        ++texture_set_why[set.key != key ? 0 : 3];
         ++texture_set_misses;
         set.key = key;
         set.stage = &stage;
@@ -2608,7 +2610,14 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
         if (!entry.id) {
             continue;
         }
-        const auto& image = texture_cache.GetImage(entry.id);
+        auto* image_ptr = texture_cache.TryGetImage(entry.id, entry.uid);
+        if (!image_ptr || False(image_ptr->flags & VideoCore::ImageFlagBits::Registered)) {
+            ++texture_set_why[2];
+            ++texture_set_misses;
+            set.generation = ~0ull;
+            return false;
+        }
+        const auto& image = *image_ptr;
         // Proxy entries need a current proxy; native entries of a proxied image go through
         // BindTextures, which may sample the proxy instead.
         const bool proxies_on = !BbToggle::Disabled(BbToggle::SampleSceneProxies);
@@ -2625,6 +2634,9 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
             return false;
         }
     }
+    // Unrelated image registrations no longer invalidate this set. UID/backing checks above
+    // prove every referenced image/view is still the same object.
+    set.generation = generation;
     ++texture_set_hits;
     slot = nullptr;
     for (u32 i = 0; i < count; ++i) {
