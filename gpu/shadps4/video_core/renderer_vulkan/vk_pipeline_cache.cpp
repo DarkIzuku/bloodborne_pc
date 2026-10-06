@@ -56,7 +56,7 @@ DriverCache::Identity DriverIdentity(const Instance& instance) {
 
 std::filesystem::path DriverCachePath() {
     return Common::FS::GetUserPath(Common::FS::PathType::CacheDir) /
-           (Common::ElfInfo::Instance().GameSerial() + ".vkcache");
+           (std::string{Common::ElfInfo::Instance().GameSerial()} + ".vkcache");
 }
 } // namespace
 
