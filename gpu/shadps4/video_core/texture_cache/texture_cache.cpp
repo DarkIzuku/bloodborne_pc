@@ -35,20 +35,42 @@ void TraceOverlap(const ImageInfo& requested, Binding binding, ImageId id, const
     if (!ImageOverlapLogging()) {
         return;
     }
+
+    // Detailed Logs is meant for short diagnostic captures. Skip the extremely common
+    // exact-reuse path and rate-limit the rest so a loading screen cannot create a multi-GB log.
+    if (action == "reuse") {
+        return;
+    }
+    static std::atomic<u64> emitted{0};
+    const u64 index = emitted.fetch_add(1, std::memory_order_relaxed);
+    if (index >= 512 && (index % 1024) != 0) {
+        return;
+    }
+
     const ImageInfo empty{};
     const auto& cached = candidate ? candidate->info : empty;
-    LOG_INFO(Render_Vulkan,
-             "Image overlap: {} ({}) requested addr={:#x} size={} format={} {}x{}x{} mips={} "
-             "layers={} type={} binding={} candidate={} addr={:#x} size={} format={} {}x{}x{} "
-             "mips={} layers={} type={} bound={} target={} view mip={} slice={}",
-             action, reason, requested.guest_address, requested.guest_size,
-             vk::to_string(requested.pixel_format), requested.size.width, requested.size.height,
-             requested.size.depth, requested.resources.levels, requested.resources.layers,
-             u64(requested.type), u32(binding), id.index, cached.guest_address, cached.guest_size,
-             vk::to_string(cached.pixel_format), cached.size.width, cached.size.height,
-             cached.size.depth, cached.resources.levels, cached.resources.layers, u64(cached.type),
-             candidate ? bool(candidate->binding.is_bound) : false,
-             candidate ? bool(candidate->binding.is_target) : false, mip, slice);
+    const auto requested_format = vk::to_string(requested.pixel_format);
+    const auto cached_format = vk::to_string(cached.pixel_format);
+    std::printf(
+        "TextureDiag overlap[%llu]: action=%.*s reason=%.*s req_addr=0x%llx req_size=%llu "
+        "req_fmt=%s req=%ux%ux%u mips=%u layers=%u type=%llu binding=%u "
+        "candidate=%u cand_addr=0x%llx cand_size=%llu cand_fmt=%s cand=%ux%ux%u "
+        "cand_mips=%u cand_layers=%u cand_type=%llu bound=%u target=%u view_mip=%d "
+        "view_slice=%d\n",
+        static_cast<unsigned long long>(index), static_cast<int>(action.size()), action.data(),
+        static_cast<int>(reason.size()), reason.data(),
+        static_cast<unsigned long long>(requested.guest_address),
+        static_cast<unsigned long long>(requested.guest_size), requested_format.c_str(),
+        requested.size.width, requested.size.height, requested.size.depth,
+        requested.resources.levels, requested.resources.layers,
+        static_cast<unsigned long long>(u64(requested.type)), u32(binding), id.index,
+        static_cast<unsigned long long>(cached.guest_address),
+        static_cast<unsigned long long>(cached.guest_size), cached_format.c_str(),
+        cached.size.width, cached.size.height, cached.size.depth, cached.resources.levels,
+        cached.resources.layers, static_cast<unsigned long long>(u64(cached.type)),
+        candidate ? unsigned(candidate->binding.is_bound) : 0u,
+        candidate ? unsigned(candidate->binding.is_target) : 0u, mip, slice);
+    std::fflush(stdout);
 }
 
 bool ReusableFormat(const ImageInfo& requested, const ImageInfo& cached, Binding binding,
