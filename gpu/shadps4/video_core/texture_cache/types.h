@@ -64,6 +64,12 @@ struct SubresourceExtent {
     u32 layers = 1;
 
     auto operator<=>(const SubresourceExtent&) const = default;
+
+    // Ordering is lexicographical; it must never be used to test resource containment.
+    constexpr bool Contains(SubresourceExtent requested, SubresourceBase base = {}) const {
+        return requested.levels && requested.layers && base.level < levels && base.layer < layers &&
+               requested.levels <= levels - base.level && requested.layers <= layers - base.layer;
+    }
 };
 
 struct SubresourceRange {

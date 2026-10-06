@@ -196,11 +196,12 @@ public:
     [[nodiscard]] std::tuple<ImageId, int, int> ResolveOverlap(const ImageInfo& info,
                                                                BindingType binding,
                                                                ImageId cache_img_id,
-                                                               ImageId merged_image_id);
+                                                               ImageId merged_image_id,
+                                                               bool exact_fmt = false);
 
     /// Resolves depth overlap and either re-creates the image or returns existing one
     [[nodiscard]] ImageId ResolveDepthOverlap(const ImageInfo& requested_info, BindingType binding,
-                                              ImageId cache_img_id);
+                                              ImageId cache_img_id, bool exact_fmt);
 
     /// Creates a new image with provided image info and copies subresources from image_id
     [[nodiscard]] ImageId ExpandImage(const ImageInfo& info, ImageId image_id);
@@ -440,6 +441,7 @@ private:
         BindingType binding{};
         u32 levels = 0;
         u32 layers = 0;
+        std::array<u32, 6> layout_key{};
         u64 generation = ~0ULL;
         ImageId image_id{};
         int view_mip = -1;

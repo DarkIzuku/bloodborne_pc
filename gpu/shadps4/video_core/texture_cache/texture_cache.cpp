@@ -13,10 +13,12 @@
 #include "core/memory.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/page_manager.h"
+#include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/host_compatibility.h"
+#include "video_core/texture_cache/overlap_diagnostics.h"
 #include "video_core/texture_cache/texture_cache.h"
 #include "video_core/texture_cache/tile_manager.h"
 
@@ -24,6 +26,71 @@ namespace VideoCore {
 
 static constexpr u64 PageShift = 12;
 static constexpr u64 NumFramesBeforeRemoval = 32;
+
+namespace {
+using Binding = TextureCache::BindingType;
+
+void TraceOverlap(const ImageInfo& requested, Binding binding, ImageId id, const Image* candidate,
+                  std::string_view action, std::string_view reason, int mip = -1, int slice = -1) {
+    if (!ImageOverlapLogging()) {
+        return;
+    }
+    const ImageInfo empty{};
+    const auto& cached = candidate ? candidate->info : empty;
+    LOG_INFO(Render_Vulkan,
+             "Image overlap: {} ({}) requested addr={:#x} size={} format={} {}x{}x{} mips={} "
+             "layers={} type={} binding={} candidate={} addr={:#x} size={} format={} {}x{}x{} "
+             "mips={} layers={} type={} bound={} target={} view mip={} slice={}",
+             action, reason, requested.guest_address, requested.guest_size,
+             vk::to_string(requested.pixel_format), requested.size.width, requested.size.height,
+             requested.size.depth, requested.resources.levels, requested.resources.layers,
+             u64(requested.type), u32(binding), id.index, cached.guest_address, cached.guest_size,
+             vk::to_string(cached.pixel_format), cached.size.width, cached.size.height,
+             cached.size.depth, cached.resources.levels, cached.resources.layers, u64(cached.type),
+             candidate ? bool(candidate->binding.is_bound) : false,
+             candidate ? bool(candidate->binding.is_target) : false, mip, slice);
+}
+
+bool ReusableFormat(const ImageInfo& requested, const ImageInfo& cached, Binding binding,
+                    bool exact) {
+    if (cached.pixel_format == vk::Format::eUndefined ||
+        (exact && requested.pixel_format != cached.pixel_format)) {
+        return false;
+    }
+    if (binding == Binding::DepthTarget) {
+        return cached.props.is_depth && requested.props.has_stencil == cached.props.has_stencil &&
+               requested.num_bits == cached.num_bits;
+    }
+    if (binding == Binding::Storage || binding == Binding::RenderTarget) {
+        if (cached.props.is_depth) {
+            return false;
+        }
+    }
+    if (binding == Binding::Texture && cached.props.is_depth &&
+        Vulkan::LiverpoolToVK::IsFormatDepthCompatible(requested.pixel_format)) {
+        // ImageView promotes R16/R32 sampling to the cached depth image's actual format.
+        return true;
+    }
+    return IsVulkanFormatCompatible(cached.pixel_format, requested.pixel_format);
+}
+
+std::string_view ReuseRejection(const ImageInfo& requested, const ImageInfo& cached, Binding binding,
+                               bool exact, int& mip, int& slice) {
+    mip = slice = 0;
+    if (requested.guest_address != cached.guest_address) {
+        mip = requested.MipOf(cached);
+        slice = mip >= 0 ? requested.SliceOf(cached, mip) : -1;
+        if (mip < 0 || slice < 0) {
+            return "not an aligned, contained mip/slice";
+        }
+    }
+    if (const auto reason = requested.ViewRejection(cached, {u32(mip), u32(slice)}); !reason.empty()) {
+        return reason;
+    }
+    return ReusableFormat(requested, cached, binding, exact)
+               ? std::string_view{} : "format or binding requires another backing image";
+}
+} // namespace
 
 TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& scheduler_,
                            Vulkan::Runtime& runtime_, AmdGpu::Liverpool* liverpool_,
@@ -233,7 +300,7 @@ void TextureCache::UnmapMemory(VAddr cpu_addr, size_t size) {
 }
 
 ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, BindingType binding,
-                                          ImageId cache_image_id) {
+                                          ImageId cache_image_id, bool exact_fmt) {
     auto& cache_image = slot_images[cache_image_id];
 
     if (!cache_image.info.props.is_depth && !requested_info.props.is_depth) {
@@ -245,7 +312,8 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
     const bool bpp_match = requested_info.num_bits == cache_image.info.num_bits;
 
     // If an image in the cache has less slices we need to expand it
-    bool recreate = cache_image.info.resources < requested_info.resources;
+    bool recreate = !requested_info.ViewRejection(cache_image.info).empty() ||
+                    (exact_fmt && requested_info.pixel_format != cache_image.info.pixel_format);
 
     switch (binding) {
     case BindingType::Texture:
@@ -278,268 +346,196 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
     }
 
     if (recreate) {
-        auto new_info = requested_info;
-        new_info.resources = std::max(requested_info.resources, cache_image.info.resources);
-        new_info.UpdateSize();
+        // Use a real covering allocation's layout. Combining independently larger mip/layer
+        // counts or recomputing attachment padding can invent guest memory/shift later mips.
+        // The existing color-channel -> MS depth conversion has different samples/bpp but the
+        // same byte footprint; normalize only these two fields for the geometry check.
+        auto source_layout = cache_image.info;
+        source_layout.num_bits = requested_info.num_bits;
+        source_layout.num_samples = requested_info.num_samples;
+        const bool request_covers = source_layout.ViewRejection(requested_info).empty();
+        const bool cache_covers = requested_info.ViewRejection(source_layout).empty();
+        if (!request_covers && !cache_covers) {
+            TraceOverlap(requested_info, binding, cache_image_id, &cache_image, "reject",
+                         "depth conversion has incompatible guest subresource layout");
+            return {};
+        }
+        auto new_info = request_covers ? requested_info : source_layout;
+        new_info.pixel_format = requested_info.pixel_format;
+        new_info.props.is_depth = requested_info.props.is_depth;
+        new_info.props.has_stencil = requested_info.props.has_stencil;
+        new_info.meta_info = requested_info.meta_info;
+        new_info.stencil_addr = requested_info.stencil_addr;
+        new_info.stencil_size = requested_info.stencil_size;
+        int mip{}, slice{};
+        if (!ReuseRejection(requested_info, new_info, binding, exact_fmt, mip, slice).empty()) {
+            return {};
+        }
         const auto new_image_id = slot_images.insert(instance, runtime, slot_image_views, new_info);
         RegisterImage(new_image_id);
 
-        // Inherit image usage
+        // SlotVector insertion may relocate images. Reacquire the source after allocation.
+        auto& source_image = slot_images[cache_image_id];
         auto& new_image = slot_images[new_image_id];
-        new_image.usage = cache_image.usage;
-        new_image.flags &= ~ImageFlagBits::Dirty;
+        new_image.usage = source_image.usage;
+        RefreshImage(new_image);
+        RefreshImage(source_image);
         // When creating a depth buffer through overlap resolution don't clear it on first use.
         new_image.info.meta_info.htile_clear_mask = 0;
-        runtime.CopyColorAndDepth(&cache_image, &new_image);
+        runtime.CopyColorAndDepth(&source_image, &new_image);
 
-        // Free the cache image.
+        // Keep bound attachments valid until the renderer notices the replacement.
+        if (source_image.binding.is_bound || source_image.binding.is_target) {
+            source_image.binding.needs_rebind = 1u;
+        }
+        new_image.binding.is_target = source_image.binding.is_target;
         FreeImage(cache_image_id);
+        TrackImage(new_image_id);
         return new_image_id;
     }
 
-    // Will be handled by view
-    return cache_image_id;
+    int mip{}, slice{};
+    return ReuseRejection(requested_info, cache_image.info, binding, exact_fmt, mip, slice).empty()
+               ? cache_image_id : ImageId{};
 }
 
 std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& image_info,
-                                                           BindingType binding,
-                                                           ImageId cache_image_id,
-                                                           ImageId merged_image_id) {
-    auto& cache_image = slot_images[cache_image_id];
-    const bool safe_to_delete =
-        scheduler.CurrentTick() - cache_image.tick_accessed_last > NumFramesBeforeRemoval;
-
-    // Equal address
-    if (image_info.guest_address == cache_image.info.guest_address) {
-        const u32 lhs_block_size = image_info.num_bits * image_info.num_samples;
-        const u32 rhs_block_size = cache_image.info.num_bits * cache_image.info.num_samples;
-        if (image_info.BlockDim() != cache_image.info.BlockDim() ||
-            lhs_block_size != rhs_block_size) {
-            // Very likely this kind of overlap is caused by allocation from a pool.
-            if (safe_to_delete) {
-                FreeImage(cache_image_id);
-            }
-            return {merged_image_id, -1, -1};
-        }
-
-        if (const auto depth_image_id = ResolveDepthOverlap(image_info, binding, cache_image_id)) {
-            return {depth_image_id, -1, -1};
-        }
-
-        // Compressed view of uncompressed image with same block size.
-        if (image_info.props.is_block && !cache_image.info.props.is_block) {
-            return {ExpandImage(image_info, cache_image_id), -1, -1};
-        }
-
-        if (image_info.guest_size == cache_image.info.guest_size &&
-            (image_info.type == AmdGpu::ImageType::Color3D ||
-             cache_image.info.type == AmdGpu::ImageType::Color3D)) {
-            return {ExpandImage(image_info, cache_image_id), -1, -1};
-        }
-
-        const bool pow2_padding_only =
-            image_info.props.is_pow2 != cache_image.info.props.is_pow2 &&
-            image_info.tile_mode == cache_image.info.tile_mode &&
-            image_info.size == cache_image.info.size &&
-            image_info.pitch == cache_image.info.pitch && image_info.resources.levels == 1 &&
-            cache_image.info.resources.levels == 1 && image_info.resources.layers == 1 &&
-            cache_image.info.resources.layers == 1;
-
-        // Size and resources are less than or equal, use image view.
-        if (image_info.pixel_format != cache_image.info.pixel_format ||
-            image_info.guest_size <= cache_image.info.guest_size || pow2_padding_only) {
-            auto result_id = merged_image_id ? merged_image_id : cache_image_id;
-            const auto& result_image = slot_images[result_id];
-            const bool is_compatible =
-                IsVulkanFormatCompatible(result_image.info.pixel_format, image_info.pixel_format);
-            return {is_compatible ? result_id : ImageId{}, -1, -1};
-        }
-
-        // Size and resources are greater, expand the image.
-        if (image_info.type == cache_image.info.type &&
-            image_info.resources > cache_image.info.resources) {
-            return {ExpandImage(image_info, cache_image_id), -1, -1};
-        }
-
-        // Size is greater but resources are not, because the tiling mode is different.
-        // Likely the address is reused for a image with a different tiling mode.
-        if (image_info.tile_mode != cache_image.info.tile_mode) {
-            if (safe_to_delete) {
-                FreeImage(cache_image_id);
-            }
-            return {merged_image_id, -1, -1};
-        }
-
-        // Enhanced debug logging for unreachable case
-        // Calculate expected size based on format and dimensions
-        u64 expected_size =
-            (static_cast<u64>(image_info.size.width) * static_cast<u64>(image_info.size.height) *
-             static_cast<u64>(image_info.size.depth) * static_cast<u64>(image_info.num_bits) / 8);
-        LOG_ERROR(Render_Vulkan,
-                  "Unresolvable image overlap with equal memory address:\n"
-                  "=== OLD IMAGE (cached) ===\n"
-                  "  Address:        {:#x}\n"
-                  "  Size:           {:#x} bytes\n"
-                  "  Format:         {}\n"
-                  "  Type:           {}\n"
-                  "  Width:          {}\n"
-                  "  Height:         {}\n"
-                  "  Depth:          {}\n"
-                  "  Pitch:          {}\n"
-                  "  Mip levels:     {}\n"
-                  "  Array layers:   {}\n"
-                  "  Samples:        {}\n"
-                  "  Tile mode:      {:#x}\n"
-                  "  Block size:     {} bits\n"
-                  "  Is block-comp:  {}\n"
-                  "  Guest size:     {:#x}\n"
-                  "  Last accessed:  tick {}\n"
-                  "  Safe to delete: {}\n"
-                  "  isPow2:         {}\n"
-                  "  Alt tile:       {}\n"
-                  "\n"
-                  "=== NEW IMAGE (requested) ===\n"
-                  "  Address:        {:#x}\n"
-                  "  Size:           {:#x} bytes\n"
-                  "  Format:         {}\n"
-                  "  Type:           {}\n"
-                  "  Width:          {}\n"
-                  "  Height:         {}\n"
-                  "  Depth:          {}\n"
-                  "  Pitch:          {}\n"
-                  "  Mip levels:     {}\n"
-                  "  Array layers:   {}\n"
-                  "  Samples:        {}\n"
-                  "  Tile mode:      {:#x}\n"
-                  "  Block size:     {} bits\n"
-                  "  Is block-comp:  {}\n"
-                  "  Guest size:     {:#x}\n"
-                  "  isPow2:         {}\n"
-                  "  Alt tile:       {}\n"
-                  "\n"
-                  "=== COMPARISON ===\n"
-                  "  Same format:           {}\n"
-                  "  Same type:             {}\n"
-                  "  Same tile mode:        {}\n"
-                  "  Same block size:       {}\n"
-                  "  Same BlockDim:         {}\n"
-                  "  Same pitch:            {}\n"
-                  "  Same pow2:             {}\n"
-                  "  Same alt tile:         {}\n"
-                  "  Old resources <= new:  {} (old: {}, new: {})\n"
-                  "  Old size <= new size:  {}\n"
-                  "  Expected size (calc):  {} bytes\n"
-                  "  Size ratio (new/expected): {:.2f}x\n"
-                  "  Size ratio (new/old):  {:.2f}x\n"
-                  "  Old vs expected diff:  {} bytes ({:+.2f}%)\n"
-                  "  New vs expected diff:  {} bytes ({:+.2f}%)\n"
-                  "  Merged image ID:       {}\n"
-                  "  Binding type:          {}\n"
-                  "  Current tick:          {}\n"
-                  "  Age (ticks since last access): {}",
-
-                  // Old image details
-                  cache_image.info.guest_address, cache_image.info.guest_size,
-                  vk::to_string(cache_image.info.pixel_format),
-                  static_cast<int>(cache_image.info.type), cache_image.info.size.width,
-                  cache_image.info.size.height, cache_image.info.size.depth, cache_image.info.pitch,
-                  cache_image.info.resources.levels, cache_image.info.resources.layers,
-                  cache_image.info.num_samples, static_cast<u32>(cache_image.info.tile_mode),
-                  cache_image.info.num_bits, +cache_image.info.props.is_block,
-                  cache_image.info.guest_size, cache_image.tick_accessed_last, safe_to_delete,
-                  bool(cache_image.info.props.is_pow2), cache_image.info.alt_tile,
-
-                  // New image details
-                  image_info.guest_address, image_info.guest_size,
-                  vk::to_string(image_info.pixel_format), static_cast<int>(image_info.type),
-                  image_info.size.width, image_info.size.height, image_info.size.depth,
-                  image_info.pitch, image_info.resources.levels, image_info.resources.layers,
-                  image_info.num_samples, static_cast<u32>(image_info.tile_mode),
-                  image_info.num_bits, image_info.props.is_block, image_info.guest_size,
-                  bool(image_info.props.is_pow2), image_info.alt_tile,
-
-                  // Comparison
-                  (image_info.pixel_format == cache_image.info.pixel_format),
-                  (image_info.type == cache_image.info.type),
-                  (image_info.tile_mode == cache_image.info.tile_mode),
-                  (image_info.num_bits == cache_image.info.num_bits),
-                  (image_info.BlockDim() == cache_image.info.BlockDim()),
-                  (image_info.pitch == cache_image.info.pitch),
-                  (image_info.props.is_pow2 == cache_image.info.props.is_pow2),
-                  (image_info.alt_tile == cache_image.info.alt_tile),
-                  (cache_image.info.resources <= image_info.resources),
-                  cache_image.info.resources.levels, image_info.resources.levels,
-                  (cache_image.info.guest_size <= image_info.guest_size), expected_size,
-
-                  // Size ratios
-                  static_cast<double>(image_info.guest_size) / expected_size,
-                  static_cast<double>(image_info.guest_size) / cache_image.info.guest_size,
-
-                  // Difference between actual and expected sizes with percentages
-                  static_cast<s64>(cache_image.info.guest_size) - static_cast<s64>(expected_size),
-                  (static_cast<double>(cache_image.info.guest_size) / expected_size - 1.0) * 100.0,
-
-                  static_cast<s64>(image_info.guest_size) - static_cast<s64>(expected_size),
-                  (static_cast<double>(image_info.guest_size) / expected_size - 1.0) * 100.0,
-
-                  merged_image_id.index, static_cast<int>(binding), scheduler.CurrentTick(),
-                  scheduler.CurrentTick() - cache_image.tick_accessed_last);
-
-        UNREACHABLE_MSG("Encountered unresolvable image overlap with equal memory address.");
+                                                         BindingType binding,
+                                                         ImageId cache_image_id,
+                                                         ImageId merged_image_id,
+                                                         bool exact_fmt) {
+    auto& cached = slot_images[cache_image_id];
+    if (cache_image_id == merged_image_id || False(cached.flags & ImageFlagBits::Registered) ||
+        cached.info.pixel_format == vk::Format::eUndefined) {
+        // Undefined images are stencil/depth association records, not reusable Vulkan images.
+        return {{}, -1, -1};
     }
-
-    // Right overlap, the image requested is a possible subresource of the image from cache.
-    if (image_info.guest_address > cache_image.info.guest_address) {
-        if (auto mip = image_info.MipOf(cache_image.info); mip >= 0) {
-            if (auto slice = image_info.SliceOf(cache_image.info, mip); slice >= 0) {
-                return {cache_image_id, mip, slice};
-            }
-        }
-
-        // Image isn't a subresource but a chance overlap.
-        if (safe_to_delete) {
+    const auto reject = [&](std::string_view reason) -> std::tuple<ImageId, int, int> {
+        TraceOverlap(image_info, binding, cache_image_id, &cached, "reject", reason);
+        // Retain the old cheap retirement of cold aliases, but leave bound/GPU-modified
+        // images to normal GC (which can write them back). Rejection must not lose GPU data.
+        if (!cached.binding.is_bound && !cached.binding.is_target &&
+            False(cached.flags & ImageFlagBits::GpuModified) &&
+            scheduler.CurrentTick() - cached.tick_accessed_last > NumFramesBeforeRemoval) {
             FreeImage(cache_image_id);
         }
-
         return {{}, -1, -1};
-    } else {
-        // Left overlap, the image from cache is a possible subresource of the image requested
-        if (auto mip = cache_image.info.MipOf(image_info); mip >= 0) {
-            if (auto slice = cache_image.info.SliceOf(image_info, mip); slice >= 0) {
-                // We have a larger image created and a separate one, representing a subres of it
-                // bound as render target. In this case we need to rebind render target.
-                if (cache_image.binding.is_target) {
-                    cache_image.binding.needs_rebind = 1u;
-                    if (merged_image_id) {
-                        GetImage(merged_image_id).binding.is_target = 1u;
-                    }
+    };
 
-                    FreeImage(cache_image_id);
-                    return {merged_image_id, -1, -1};
-                }
-
-                // We need to have a larger, already allocated image to copy this one into
-                if (merged_image_id) {
-                    auto& merged_image = slot_images[merged_image_id];
-                    runtime.CopyMip(&cache_image, &merged_image, mip, slice);
-                    FreeImage(cache_image_id);
-                }
-            }
+    // Once a covering image has been selected, only merge its actual child subresources.
+    // Do not replace it with a later, smaller alias and lose the previously selected view.
+    if (!merged_image_id && image_info.guest_address == cached.info.guest_address) {
+        if (image_info.BlockDim() != cached.info.BlockDim() ||
+            image_info.num_bits * image_info.num_samples !=
+                cached.info.num_bits * cached.info.num_samples) {
+            return reject("different block dimensions or sample footprint");
         }
+        if (image_info.array_mode != cached.info.array_mode ||
+            image_info.tile_mode != cached.info.tile_mode ||
+            image_info.alt_tile != cached.info.alt_tile) {
+            return reject("different guest tiling layout");
+        }
+        if (image_info.type != cached.info.type) {
+            const bool volume_copy =
+                (image_info.type == AmdGpu::ImageType::Color3D &&
+                 cached.info.type == AmdGpu::ImageType::Color2D &&
+                 image_info.size.depth == cached.info.resources.layers) ||
+                (cached.info.type == AmdGpu::ImageType::Color3D &&
+                 image_info.type == AmdGpu::ImageType::Color2D &&
+                 cached.info.size.depth == image_info.resources.layers);
+            if (volume_copy && image_info.guest_size == cached.info.guest_size &&
+                image_info.resources.levels == cached.info.resources.levels &&
+                image_info.IsCompatible(cached.info)) {
+                TraceOverlap(image_info, binding, cache_image_id, &cached, "expand",
+                             "2D/3D backing conversion");
+                return {ExpandImage(image_info, cache_image_id), -1, -1};
+            }
+            return reject("different image type");
+        }
+        const bool cached_covers = cached.info.resources.Contains(image_info.resources);
+        const bool request_covers = image_info.resources.Contains(cached.info.resources);
+        if (!cached_covers && !request_covers) {
+            // Taking a component-wise maximum here could invent guest memory beyond BOTH
+            // allocations (e.g. more mips versus more layers). Preserve this legitimate alias.
+            return reject("crossed mip/layer extents; neither image contains the other");
+        }
+        if (const auto depth = ResolveDepthOverlap(image_info, binding, cache_image_id, exact_fmt)) {
+            TraceOverlap(image_info, binding, depth, &slot_images[depth],
+                         depth == cache_image_id ? "view" : "expand", "depth/color binding");
+            return {depth, -1, -1};
+        }
+
+        int mip{}, slice{};
+        const auto reason = ReuseRejection(image_info, cached.info, binding, exact_fmt, mip, slice);
+        if (reason.empty()) {
+            TraceOverlap(image_info, binding, cache_image_id, &cached, "view", "covering backing");
+            return {cache_image_id, mip, slice};
+        }
+        if (request_covers && image_info.IsCompatible(cached.info) &&
+            cached.info.ViewRejection(image_info).empty() &&
+            // Changing the number of layers relocates later guest mips. Only a one-mip
+            // source, or an unchanged layer stride, can be preserved by CopyImage.
+            (cached.info.resources.levels == 1 ||
+             image_info.resources.layers == cached.info.resources.layers)) {
+            TraceOverlap(image_info, binding, cache_image_id, &cached, "expand", reason);
+            return {ExpandImage(image_info, cache_image_id), -1, -1};
+        }
+        return reject(reason);
     }
 
+    if (!merged_image_id && image_info.guest_address > cached.info.guest_address) {
+        int mip{}, slice{};
+        const auto reason = ReuseRejection(image_info, cached.info, binding, exact_fmt, mip, slice);
+        if (!reason.empty()) {
+            return reject(reason);
+        }
+        TraceOverlap(image_info, binding, cache_image_id, &cached, "view",
+                     "contained subresource", mip, slice);
+        return {cache_image_id, mip, slice};
+    }
+
+    // Preserve a cached mip/array slice, including a currently bound render target, before
+    // retiring it. Previously the target branch freed it before any larger image/copy existed.
+    const int mip = cached.info.MipOf(image_info);
+    const int slice = mip >= 0 ? cached.info.SliceOf(image_info, mip) : -1;
+    if (mip < 0 || slice < 0 ||
+        !cached.info.ViewRejection(image_info, {u32(mip), u32(slice)}).empty() ||
+        !IsVulkanFormatCompatible(image_info.pixel_format, cached.info.pixel_format)) {
+        return reject("cached image is not a covered child subresource");
+    }
+    if (!merged_image_id) {
+        merged_image_id = slot_images.insert(instance, runtime, slot_image_views, image_info);
+        RegisterImage(merged_image_id);
+        RefreshImage(slot_images[merged_image_id]);
+    }
+    // Inserting the parent may relocate SlotVector storage.
+    auto& source = slot_images[cache_image_id];
+    auto& merged = slot_images[merged_image_id];
+    RefreshImage(source);
+    runtime.CopyMip(&source, &merged, mip, slice);
+    if (source.binding.is_bound || source.binding.is_target) {
+        source.binding.needs_rebind = 1u;
+    }
+    merged.binding.is_target |= source.binding.is_target;
+    TraceOverlap(image_info, binding, cache_image_id, &source, "merge",
+                 "copy child before retiring backing", mip, slice);
+    FreeImage(cache_image_id);
+    TrackImage(merged_image_id);
     return {merged_image_id, -1, -1};
 }
 
 ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
-    const auto new_image_id = slot_images.insert(instance, runtime, slot_image_views, info);
+    const auto new_info = info;
+    const auto new_image_id = slot_images.insert(instance, runtime, slot_image_views, new_info);
     RegisterImage(new_image_id);
 
     auto& src_image = slot_images[image_id];
     auto& new_image = slot_images[new_image_id];
 
     RefreshImage(new_image);
+    RefreshImage(src_image);
     runtime.CopyImage(&src_image, &new_image);
+    new_image.binding.is_target = src_image.binding.is_target;
 
     if (src_image.binding.is_bound || src_image.binding.is_target) {
         src_image.binding.needs_rebind = 1u;
@@ -573,7 +569,9 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         return True(image.flags & ImageFlagBits::Registered) &&
                image.info.guest_address == info.guest_address &&
                image.info.guest_size == info.guest_size && image.info.size == info.size &&
-               image.info.pixel_format == info.pixel_format;
+               image.info.pixel_format == info.pixel_format && image.info.type == info.type &&
+               image.info.resources.Contains(info.resources) &&
+               image.info.LayoutKey() == info.LayoutKey();
     };
     if ((cached.generation == registry_generation.load(std::memory_order_relaxed) || still_exact()) &&
         cached.address == info.guest_address &&
@@ -581,15 +579,16 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         cached.format == info.pixel_format && cached.type == info.type &&
         cached.exact_fmt == exact_fmt && cached.binding == desc.type &&
         cached.levels == info.resources.levels && cached.layers == info.resources.layers &&
+        cached.layout_key == info.LayoutKey() &&
         !BbToggle::Disabled(BbToggle::FindImageCache)) {
         Image& image = slot_images[cached.image_id];
         image.tick_accessed_last = scheduler.CurrentTick();
         TouchImage(image);
         if (cached.view_mip > 0) {
-            desc.view_info.range.base.level = cached.view_mip;
+            desc.view_info.range.base.level += cached.view_mip;
         }
         if (cached.view_slice > 0) {
-            desc.view_info.range.base.layer = cached.view_slice;
+            desc.view_info.range.base.layer += cached.view_slice;
         }
         return cached.image_id;
     }
@@ -600,61 +599,61 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
 
     ImageId image_id{};
 
-    // Check for a perfect match first
-    for (const auto& cache_id : image_ids) {
-        auto& cache_image = slot_images[cache_id];
-        if (cache_image.info.guest_address != info.guest_address) {
-            continue;
-        }
-        if (cache_image.info.guest_size != info.guest_size) {
-            continue;
-        }
-        if (cache_image.info.size != info.size) {
-            continue;
-        }
-        if (!IsVulkanFormatCompatible(cache_image.info.pixel_format, info.pixel_format) ||
-            (cache_image.info.type != info.type && info.size != Extent3D{1, 1, 1})) {
-            continue;
-        }
-        if (exact_fmt && info.pixel_format != cache_image.info.pixel_format) {
-            continue;
-        }
-        image_id = cache_id;
-    }
-
-    // Try to resolve overlaps (if any)
     int view_mip{-1};
     int view_slice{-1};
-    if (!image_id) {
-        for (const auto& cache_id : image_ids) {
-            view_mip = -1;
-            view_slice = -1;
-
-            const auto& merged_info = image_id ? slot_images[image_id].info : info;
-            auto [overlap_image_id, overlap_view_mip, overlap_view_slice] =
-                ResolveOverlap(merged_info, desc.type, cache_id, image_id);
-            if (overlap_image_id) {
-                image_id = overlap_image_id;
-                view_mip = overlap_view_mip;
-                view_slice = overlap_view_slice;
-            }
+    // Preserve the exact-match fast path, but validate independent mip/layer coverage too.
+    // Other covering parents go through resolution so modified child targets can be merged.
+    for (const auto cache_id : image_ids) {
+        const auto& candidate = slot_images[cache_id];
+        if (candidate.info.pixel_format == vk::Format::eUndefined ||
+            candidate.info.guest_address != info.guest_address ||
+            candidate.info.guest_size != info.guest_size || candidate.info.size != info.size ||
+            candidate.info.resources != info.resources) {
+            continue;
         }
+        int mip{}, slice{};
+        const auto reason = ReuseRejection(info, candidate.info, desc.type, exact_fmt, mip, slice);
+        if (reason.empty()) {
+            image_id = cache_id;
+            view_mip = mip ? mip : -1;
+            view_slice = slice ? slice : -1;
+            TraceOverlap(info, desc.type, cache_id, &candidate,
+                         mip || slice ? "view" : "reuse", "covers requested resources", mip, slice);
+            break;
+        }
+        TraceOverlap(info, desc.type, cache_id, &candidate, "reject reuse", reason, mip, slice);
     }
 
-    if (image_id) {
-        Image& image_resolved = slot_images[image_id];
-        if (exact_fmt && info.pixel_format != image_resolved.info.pixel_format) {
-            // Cannot reuse this image as we need the exact requested format.
-            image_id = {};
-        } else if (image_resolved.info.resources < info.resources) {
-            // The image was clearly picked up wrong.
-            FreeImage(image_id);
-            image_id = {};
-            LOG_WARNING(Render_Vulkan, "Image overlap resolve failed");
+    if (!image_id) {
+        for (const auto cache_id : image_ids) {
+            const auto& candidate = slot_images[cache_id];
+            if (cache_id == image_id || False(candidate.flags & ImageFlagBits::Registered)) {
+                continue;
+            }
+            // Exact-format callers cannot end up with a differently formatted covering view.
+            // A conversion/expansion may still create the requested format, so let it proceed.
+            const auto& merged_info = image_id ? slot_images[image_id].info : info;
+            const auto [resolved, mip, slice] =
+                ResolveOverlap(merged_info, desc.type, cache_id, image_id, exact_fmt);
+            if (!resolved || resolved == image_id) {
+                continue; // Keep the original subresource location on non-matches/child merges.
+            }
+            int original_mip{}, original_slice{};
+            const auto reason = ReuseRejection(info, slot_images[resolved].info, desc.type,
+                                               exact_fmt, original_mip, original_slice);
+            if (!reason.empty()) {
+                TraceOverlap(info, desc.type, resolved, &slot_images[resolved], "reject result", reason);
+                continue;
+            }
+            image_id = resolved;
+            view_mip = original_mip ? original_mip : -1;
+            view_slice = original_slice ? original_slice : -1;
         }
     }
     // Create and register a new image
     if (!image_id) {
+        view_mip = view_slice = -1;
+        TraceOverlap(info, desc.type, {}, nullptr, "create", "no candidate covers requested view");
         image_id = slot_images.insert(instance, runtime, slot_image_views, info);
         RegisterImage(image_id);
     }
@@ -665,10 +664,10 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
 
     // If the image requested is a subresource of the image from cache record its location.
     if (view_mip > 0) {
-        desc.view_info.range.base.level = view_mip;
+        desc.view_info.range.base.level += view_mip;
     }
     if (view_slice > 0) {
-        desc.view_info.range.base.layer = view_slice;
+        desc.view_info.range.base.layer += view_slice;
     }
 
     cached = FindImageCacheEntry{
@@ -681,6 +680,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         .binding = desc.type,
         .levels = info.resources.levels,
         .layers = info.resources.layers,
+        .layout_key = info.LayoutKey(),
         .generation = registry_generation.load(std::memory_order_relaxed),
         .image_id = image_id,
         .view_mip = view_mip,
