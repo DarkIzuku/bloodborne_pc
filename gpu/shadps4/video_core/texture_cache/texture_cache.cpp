@@ -73,53 +73,6 @@ void TraceOverlap(const ImageInfo& requested, Binding binding, ImageId id, const
     std::fflush(stdout);
 }
 
-// A number of Bloodborne UI textures are first exposed as mip 0, then the T# grows to the
-// complete mip chain over the next few draws. Recreating the VkImage for every extra mip changes
-// its backing/view while the loading-screen UI is sampling it and can produce one-frame blanks.
-// Reserve host capacity only for small, single-layer sampled 2D textures. Guest-visible levels
-// remain unchanged until the game actually exposes them, so no unread guest memory is sampled.
-u32 ReservedHostMipLevels(const ImageInfo& info, Binding binding) {
-    if (binding != Binding::Texture || info.props.is_depth || info.num_samples != 1 ||
-        info.resources.levels != 1 || info.resources.layers != 1 || info.size.depth != 1) {
-        return info.resources.levels;
-    }
-    const u32 max_dim = std::max(info.size.width, info.size.height);
-    if (max_dim == 0 || max_dim > 512) {
-        return info.resources.levels;
-    }
-    u32 levels = 1;
-    for (u32 dim = max_dim; dim > 1 && levels < info.mips_layout.size(); dim >>= 1) {
-        ++levels;
-    }
-    return levels;
-}
-
-bool CanPromoteMipChainInPlace(const ImageInfo& next, const Image& image, Binding binding) {
-    const auto& current = image.info;
-    if (binding != Binding::Texture || !image.backing || current.props.is_depth ||
-        current.num_samples != 1 || current.resources.layers != 1 || next.resources.layers != 1 ||
-        current.size.depth != 1 || next.size.depth != 1 || image.usage.storage ||
-        image.usage.render_target || image.usage.depth_target ||
-        True(image.flags & ImageFlagBits::GpuModified) ||
-        next.resources.levels <= current.resources.levels ||
-        next.resources.levels > image.backing->image.image_ci.mipLevels ||
-        next.guest_address != current.guest_address || next.guest_size < current.guest_size ||
-        next.size != current.size || next.pixel_format != current.pixel_format ||
-        next.type != current.type || next.num_bits != current.num_bits ||
-        next.num_samples != current.num_samples || next.LayoutKey() != current.LayoutKey()) {
-        return false;
-    }
-    for (u32 mip = 0; mip < current.resources.levels; ++mip) {
-        const auto& a = current.mips_layout[mip];
-        const auto& b = next.mips_layout[mip];
-        if (a.size != b.size || a.pitch != b.pitch || a.height != b.height ||
-            a.offset != b.offset) {
-            return false;
-        }
-    }
-    return true;
-}
-
 bool ReusableFormat(const ImageInfo& requested, const ImageInfo& cached, Binding binding,
                     bool exact) {
     if (cached.pixel_format == vk::Format::eUndefined ||
@@ -517,7 +470,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
                 image_info.IsCompatible(cached.info)) {
                 TraceOverlap(image_info, binding, cache_image_id, &cached, "expand",
                              "2D/3D backing conversion");
-                return {ExpandImage(image_info, cache_image_id, binding), -1, -1};
+                return {ExpandImage(image_info, cache_image_id), -1, -1};
             }
             return reject("different image type");
         }
@@ -547,7 +500,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
             (cached.info.resources.levels == 1 ||
              image_info.resources.layers == cached.info.resources.layers)) {
             TraceOverlap(image_info, binding, cache_image_id, &cached, "expand", reason);
-            return {ExpandImage(image_info, cache_image_id, binding), -1, -1};
+            return {ExpandImage(image_info, cache_image_id), -1, -1};
         }
         return reject(reason);
     }
@@ -573,8 +526,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
         return reject("cached image is not a covered child subresource");
     }
     if (!merged_image_id) {
-        merged_image_id = slot_images.insert(instance, runtime, slot_image_views, image_info,
-                                             ReservedHostMipLevels(image_info, binding));
+        merged_image_id = slot_images.insert(instance, runtime, slot_image_views, image_info);
         RegisterImage(merged_image_id);
         RefreshImage(slot_images[merged_image_id]);
     }
@@ -594,53 +546,9 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
     return {merged_image_id, -1, -1};
 }
 
-ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id,
-                                      BindingType binding) {
-    auto& existing = slot_images[image_id];
-    if (CanPromoteMipChainInPlace(info, existing, binding)) {
-        const u32 old_levels = existing.info.resources.levels;
-        const u32 old_size = existing.info.guest_size;
-        const u32 new_levels = info.resources.levels;
-
-        // The VkImage was preallocated with enough host mip levels. Only extend the guest
-        // registration and upload the levels Bloodborne has now made valid. ImageId, VkImage and
-        // existing one-mip views stay alive, avoiding the loading-screen descriptor blink.
-        existing.info = info;
-        existing.guest_begin = info.guest_address;
-        existing.guest_end = info.guest_address + info.guest_size;
-        existing.mip_hashes.resize(new_levels, 0);
-        if (!existing.backing->subresource_states.empty()) {
-            existing.backing->subresource_states.resize(
-                new_levels * info.resources.layers, existing.backing->state);
-        }
-        total_used_memory += Common::AlignUp(info.guest_size, 1024) -
-                             Common::AlignUp(old_size, 1024);
-        ForEachPage(info.guest_address, info.guest_size, [this, image_id](u64 page) {
-            auto& ids = page_table[page];
-            if (std::ranges::find(ids, image_id) == ids.end()) {
-                ids.push_back(image_id);
-            }
-        });
-        ++registry_generation;
-        existing.flags |= ImageFlagBits::CpuDirty;
-        RefreshImage(existing);
-        TrackImage(image_id);
-        if (ImageOverlapLogging()) {
-            std::printf(
-                "TextureDiag mip-promote: image=%u addr=0x%llx levels=%u->%u host=%u "
-                "guest_size=%u->%u backing=%p\n",
-                image_id.index, static_cast<unsigned long long>(info.guest_address), old_levels,
-                new_levels, existing.backing->image.image_ci.mipLevels, old_size, info.guest_size,
-                static_cast<void*>(existing.backing));
-            std::fflush(stdout);
-        }
-        return image_id;
-    }
-
+ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
     const auto new_info = info;
-    const auto new_image_id =
-        slot_images.insert(instance, runtime, slot_image_views, new_info,
-                           ReservedHostMipLevels(new_info, binding));
+    const auto new_image_id = slot_images.insert(instance, runtime, slot_image_views, new_info);
     RegisterImage(new_image_id);
 
     auto& src_image = slot_images[image_id];
@@ -769,8 +677,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     if (!image_id) {
         view_mip = view_slice = -1;
         TraceOverlap(info, desc.type, {}, nullptr, "create", "no candidate covers requested view");
-        image_id = slot_images.insert(instance, runtime, slot_image_views, info,
-                                      ReservedHostMipLevels(info, desc.type));
+        image_id = slot_images.insert(instance, runtime, slot_image_views, info);
         RegisterImage(image_id);
     }
 

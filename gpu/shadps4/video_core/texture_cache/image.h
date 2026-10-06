@@ -84,8 +84,7 @@ public:
 
 struct Image {
     explicit Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime,
-                   Common::SlotVector<ImageView>& slot_image_views, const ImageInfo& info,
-                   u32 host_mip_levels = 0);
+                   Common::SlotVector<ImageView>& slot_image_views, const ImageInfo& info);
     ~Image();
 
     Image(const Image&) = delete;

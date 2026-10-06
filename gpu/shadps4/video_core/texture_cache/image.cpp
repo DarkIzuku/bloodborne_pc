@@ -123,8 +123,7 @@ void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
 }
 
 Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
-             Common::SlotVector<ImageView>& slot_image_views_, const ImageInfo& info_,
-             u32 host_mip_levels_)
+             Common::SlotVector<ImageView>& slot_image_views_, const ImageInfo& info_)
     : guest_begin{info_.guest_address}, guest_end{info_.guest_address + info_.guest_size},
       info{info_}, runtime{&runtime_}, slot_image_views{&slot_image_views_} {
     BbStats::Timer timer{BbStats::t_image_create};
@@ -175,8 +174,6 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
                             ? image_format_properties.value.imageFormatProperties.sampleCounts
                             : vk::SampleCountFlagBits::e1;
 
-    const u32 host_mip_levels =
-        std::max<u32>(info.resources.levels, host_mip_levels_ ? host_mip_levels_ : 1u);
     const vk::ImageCreateInfo image_ci = {
         .flags = flags,
         .imageType = ConvertImageType(info.type),
@@ -186,7 +183,7 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
             .height = info.size.height,
             .depth = info.size.depth,
         },
-        .mipLevels = host_mip_levels,
+        .mipLevels = static_cast<u32>(info.resources.levels),
         .arrayLayers = static_cast<u32>(info.resources.layers),
         .samples = LiverpoolToVK::NumSamples(info.num_samples, supported_samples),
         .tiling = tiling,

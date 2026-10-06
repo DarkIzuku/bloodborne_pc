@@ -204,8 +204,7 @@ public:
                                               ImageId cache_img_id, bool exact_fmt);
 
     /// Creates a new image with provided image info and copies subresources from image_id
-    [[nodiscard]] ImageId ExpandImage(const ImageInfo& info, ImageId image_id,
-                                      BindingType binding);
+    [[nodiscard]] ImageId ExpandImage(const ImageInfo& info, ImageId image_id);
 
     /// Reuploads image contents.
     void RefreshImage(Image& image);
