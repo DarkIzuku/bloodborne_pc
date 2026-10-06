@@ -1,7 +1,11 @@
 // bbport: SDL3 window for the Vulkan swapchain (X11, Wayland or Win32).
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <SDL3/SDL.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "sdl_window.h"
@@ -9,6 +13,44 @@
 #include "bbport_settings.h"
 
 namespace Frontend {
+
+#ifdef _WIN32
+static HICON LoadBloodborneWindowIcon(bool small) {
+    wchar_t exe_path[MAX_PATH]{};
+    const DWORD len = GetModuleFileNameW(nullptr, exe_path, MAX_PATH);
+    if (!len || len >= MAX_PATH) {
+        return nullptr;
+    }
+    const std::filesystem::path icon_path =
+        std::filesystem::path(exe_path).parent_path() / L"bloodborne.ico";
+    const int cx = GetSystemMetrics(small ? SM_CXSMICON : SM_CXICON);
+    const int cy = GetSystemMetrics(small ? SM_CYSMICON : SM_CYICON);
+    return static_cast<HICON>(LoadImageW(nullptr, icon_path.c_str(), IMAGE_ICON, cx, cy,
+                                         LR_LOADFROMFILE | LR_DEFAULTCOLOR));
+}
+
+static void ApplyBloodborneWindowIcon(void* hwnd_ptr, void*& big_storage, void*& small_storage) {
+    const HWND hwnd = static_cast<HWND>(hwnd_ptr);
+    if (!hwnd) {
+        return;
+    }
+    HICON big = LoadBloodborneWindowIcon(false);
+    HICON small = LoadBloodborneWindowIcon(true);
+    if (!big && !small) {
+        return;
+    }
+    if (big) {
+        SendMessageW(hwnd, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(big));
+        SetClassLongPtrW(hwnd, GCLP_HICON, reinterpret_cast<LONG_PTR>(big));
+        big_storage = big;
+    }
+    if (small) {
+        SendMessageW(hwnd, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(small));
+        SetClassLongPtrW(hwnd, GCLP_HICONSM, reinterpret_cast<LONG_PTR>(small));
+        small_storage = small;
+    }
+}
+#endif
 
 WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}, height{height_} {
     // Gamepads are sampled by runtime_pad.c; their events are pumped here with the window's.
@@ -37,6 +79,7 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     if (driver && !std::strcmp(driver, "windows")) {
         window_info.type = WindowSystemType::Windows;
         window_info.render_surface = SDL_GetPointerProperty(wp, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+        ApplyBloodborneWindowIcon(window_info.render_surface, win_icon_big, win_icon_small);
     } else
 #endif
     if (driver && !std::strcmp(driver, "x11")) {
@@ -59,6 +102,14 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
 
 WindowSDL::~WindowSDL() {
     SDL_DestroyWindow(window);
+#ifdef _WIN32
+    if (win_icon_big) {
+        DestroyIcon(static_cast<HICON>(win_icon_big));
+    }
+    if (win_icon_small) {
+        DestroyIcon(static_cast<HICON>(win_icon_small));
+    }
+#endif
 }
 
 void WindowSDL::BeginTextInput(const std::string& initial, const std::string& prompt) {
