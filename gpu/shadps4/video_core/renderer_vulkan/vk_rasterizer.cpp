@@ -1497,14 +1497,11 @@ bool Rasterizer::TexturesBindableOnHelper(const Shader::Info& stage,
         const auto& entry =
             prepared ? CachedImageDescEntry(tsharp, image_desc, prepared->image_hashes[image_index])
                      : CachedImageDescEntry(tsharp, image_desc);
-        auto* image = texture_cache.TryGetImage(entry.found_id, entry.found_uid);
-        if (!image || False(image->flags & VideoCore::ImageFlagBits::Registered)) {
+        if (entry.found_generation != generation) {
             return false;
         }
-        // Registry generation changes caused by unrelated textures do not invalidate this
-        // descriptor memo. Slot reuse is rejected by the per-image UID above.
-        const_cast<ImageDescCacheEntry&>(entry).found_generation = generation;
         VideoCore::ImageId image_id = entry.found_id;
+        auto* image = &texture_cache.GetImage(image_id);
         if (const auto depth_image_id = texture_cache.GetAssociatedDepth(*image)) {
             image_id = depth_image_id;
             image = &texture_cache.GetImage(image_id);
@@ -2206,8 +2203,6 @@ Rasterizer::ImageDescCacheEntry& Rasterizer::CachedImageDescEntry(const AmdGpu::
         entry.sharp = key;
         entry.flags = flags;
         entry.found_generation = ~0ULL;
-        entry.found_id = {};
-        entry.found_uid = 0;
         entry.view_memo = {};
     }
     return entry;
@@ -2309,12 +2304,9 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         for (auto i = 0; i < num_bindings; i++) {
             // bbport: a plain binding (no mip override) of the same T# resolves to the same image
             // while no image was registered or unregistered.
-            auto* memo_image =
-                texture_cache.TryGetImage(desc_entry.found_id, desc_entry.found_uid);
-            if (mip_fallback_mode == Shader::MipStorageFallbackMode::None && memo_image &&
-                True(memo_image->flags & VideoCore::ImageFlagBits::Registered) &&
+            if (mip_fallback_mode == Shader::MipStorageFallbackMode::None &&
+                desc_entry.found_generation == texture_cache.RegistryGeneration() &&
                 !BbToggle::Disabled(BbToggle::TextureBindingMemo)) {
-                desc_entry.found_generation = texture_cache.RegistryGeneration();
                 desc_entry.pinned = bind_epoch;
                 auto& [image_id, _] =
                     image_bindings.emplace_back(desc_entry.found_id, &desc_entry.found_desc);
@@ -2347,13 +2339,13 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 desc.view_info.range.extent.levels = 1;
             }
 
+            const u64 generation = texture_cache.RegistryGeneration();
             image_id = texture_cache.FindImage(desc);
             if (mip_fallback_mode == Shader::MipStorageFallbackMode::None &&
+                generation == texture_cache.RegistryGeneration() &&
                 desc_entry.pinned != bind_epoch) {
-                auto& found_image = texture_cache.GetImage(image_id);
-                desc_entry.found_generation = texture_cache.RegistryGeneration();
+                desc_entry.found_generation = generation;
                 desc_entry.found_id = image_id;
-                desc_entry.found_uid = found_image.image_uid;
                 desc_entry.found_desc = desc;
                 desc_entry.view_memo = {};
             }
@@ -2411,8 +2403,8 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                     image.usage.texture = 1u;
                     image_infos.emplace_back(VK_NULL_HANDLE, proxy->view, proxy->layout);
                     if (set_ok && binding_index < resolved.size()) {
-                        resolved[binding_index] = {image_id, image.image_uid, proxy->view,
-                                                   image.backing, desc.view_info.range, true};
+                        resolved[binding_index] = {image_id, proxy->view, image.backing,
+                                                   desc.view_info.range, true};
                     }
                     ++proxy_samples;
                     continue;
@@ -2460,8 +2452,8 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             }
             image_infos.emplace_back(VK_NULL_HANDLE, view, layout);
             if (set_ok && binding_index < resolved.size()) {
-                resolved[binding_index] = {image_id, image.image_uid, *image_view.image_view,
-                                           image.backing, desc.view_info.range};
+                resolved[binding_index] = {image_id, *image_view.image_view, image.backing,
+                                           desc.view_info.range};
                 set_ok = !is_storage && !binding.force_general && !binding.is_target;
             }
         }
@@ -2565,11 +2557,13 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
     slot = &set;
     const u64 generation = texture_cache.RegistryGeneration();
     const bool match = set.key == key && set.stage == &stage && set.count == count &&
+                       set.generation == generation &&
                        set.scene_generation == scene_targets->Generation() &&
                        std::equal(set.hashes.begin(), set.hashes.begin() + count,
                                   prepared->image_hashes);
     if (!match) {
-        const bool generation_miss = false;
+        const bool generation_miss = set.key == key && set.stage == &stage && set.count == count &&
+                                     set.generation != generation;
         if (generation_miss && VideoCore::ImageOverlapLogging()) {
             static std::atomic<u64> generation_diag_count{0};
             const u64 diag_index =
@@ -2587,10 +2581,9 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
                 for (u32 i = 0; i < set.count; ++i) {
                     const auto& entry = set.entries[i];
                     std::printf(
-                        "  TextureDiag entry[%u]: image=%u uid=%llu backing=%p view=0x%llx "
+                        "  TextureDiag entry[%u]: image=%u backing=%p view=0x%llx "
                         "mip=%u+%u layer=%u+%u proxy=%u\n",
-                        i, entry.id.index, static_cast<unsigned long long>(entry.uid),
-                        entry.backing,
+                        i, entry.id.index, entry.backing,
                         static_cast<unsigned long long>(
                             reinterpret_cast<uintptr_t>(static_cast<VkImageView>(entry.view))),
                         entry.range.base.level, entry.range.extent.levels,
@@ -2600,7 +2593,7 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
                 std::fflush(stdout);
             }
         }
-        ++texture_set_why[set.key != key ? 0 : 3];
+        ++texture_set_why[set.key != key ? 0 : set.generation != generation ? 1 : 3];
         ++texture_set_misses;
         set.key = key;
         set.stage = &stage;
@@ -2609,35 +2602,13 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
         std::copy_n(prepared->image_hashes, count, set.hashes.begin());
         return false;
     }
-    if (set.generation != generation && VideoCore::ImageOverlapLogging()) {
-        static std::atomic<u64> generation_revalidated{0};
-        const u64 diag_index =
-            generation_revalidated.fetch_add(1, std::memory_order_relaxed);
-        if (diag_index < 64 || (diag_index % 1024) == 0) {
-            std::printf(
-                "TextureDiag set-generation-revalidate[%llu]: key=0x%llx old_gen=%llu "
-                "new_gen=%llu count=%u\n",
-                static_cast<unsigned long long>(diag_index),
-                static_cast<unsigned long long>(key),
-                static_cast<unsigned long long>(set.generation),
-                static_cast<unsigned long long>(generation), set.count);
-            std::fflush(stdout);
-        }
-    }
     // Every image still has the backing its view belongs to and needs no refresh.
     for (u32 i = 0; i < count; ++i) {
         const auto& entry = set.entries[i];
         if (!entry.id) {
             continue;
         }
-        auto* image_ptr = texture_cache.TryGetImage(entry.id, entry.uid);
-        if (!image_ptr || False(image_ptr->flags & VideoCore::ImageFlagBits::Registered)) {
-            ++texture_set_why[2];
-            ++texture_set_misses;
-            set.generation = ~0ull;
-            return false;
-        }
-        const auto& image = *image_ptr;
+        const auto& image = texture_cache.GetImage(entry.id);
         // Proxy entries need a current proxy; native entries of a proxied image go through
         // BindTextures, which may sample the proxy instead.
         const bool proxies_on = !BbToggle::Disabled(BbToggle::SampleSceneProxies);
@@ -2654,9 +2625,6 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
             return false;
         }
     }
-    // Unrelated image registrations no longer invalidate this set. UID/backing checks above
-    // prove every referenced image/view is still the same object.
-    set.generation = generation;
     ++texture_set_hits;
     slot = nullptr;
     for (u32 i = 0; i < count; ++i) {

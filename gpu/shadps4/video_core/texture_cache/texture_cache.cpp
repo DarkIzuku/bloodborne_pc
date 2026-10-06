@@ -673,36 +673,32 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     key_hash = (key_hash ^ key_hash >> 33) * 0xC4CEB9FE1A85EC53ull;
     key_hash ^= key_hash >> 33;
     auto& cached = find_image_cache[key_hash % find_image_cache.size()];
-    const bool same_request =
-        cached.address == info.guest_address && cached.size == info.guest_size &&
-        cached.extent == info.size && cached.format == info.pixel_format &&
-        cached.type == info.type && cached.exact_fmt == exact_fmt && cached.binding == desc.type &&
-        cached.levels == info.resources.levels && cached.layers == info.resources.layers &&
-        cached.layout_key == info.LayoutKey();
-    const auto cached_image_still_valid = [&] {
-        if (!cached.image_id || !slot_images.is_allocated(cached.image_id)) {
+    // An exact match stays valid while that image is registered with the same description;
+    // resolved overlaps (views into other images) only until any image registration changes.
+    const auto still_exact = [&] {
+        if (cached.view_mip >= 0 || cached.view_slice >= 0 || !cached.image_id ||
+            !slot_images.is_allocated(cached.image_id)) {
             return false;
         }
         const Image& image = slot_images[cached.image_id];
-        if (image.image_uid != cached.image_uid ||
-            False(image.flags & ImageFlagBits::Registered)) {
-            return false;
-        }
-        int mip{}, slice{};
-        if (!ReuseRejection(info, image.info, desc.type, exact_fmt, mip, slice).empty()) {
-            return false;
-        }
-        const int resolved_mip = mip ? mip : -1;
-        const int resolved_slice = slice ? slice : -1;
-        return resolved_mip == cached.view_mip && resolved_slice == cached.view_slice;
+        return True(image.flags & ImageFlagBits::Registered) &&
+               image.info.guest_address == info.guest_address &&
+               image.info.guest_size == info.guest_size && image.info.size == info.size &&
+               image.info.pixel_format == info.pixel_format && image.info.type == info.type &&
+               image.info.resources.Contains(info.resources) &&
+               image.info.LayoutKey() == info.LayoutKey();
     };
-    if (same_request && !BbToggle::Disabled(BbToggle::FindImageCache) &&
-        (cached.generation == registry_generation.load(std::memory_order_relaxed) ||
-         cached_image_still_valid())) {
+    if ((cached.generation == registry_generation.load(std::memory_order_relaxed) || still_exact()) &&
+        cached.address == info.guest_address &&
+        cached.size == info.guest_size && cached.extent == info.size &&
+        cached.format == info.pixel_format && cached.type == info.type &&
+        cached.exact_fmt == exact_fmt && cached.binding == desc.type &&
+        cached.levels == info.resources.levels && cached.layers == info.resources.layers &&
+        cached.layout_key == info.LayoutKey() &&
+        !BbToggle::Disabled(BbToggle::FindImageCache)) {
         Image& image = slot_images[cached.image_id];
         image.tick_accessed_last = scheduler.CurrentTick();
         TouchImage(image);
-        cached.generation = registry_generation.load(std::memory_order_relaxed);
         if (cached.view_mip > 0) {
             desc.view_info.range.base.level += cached.view_mip;
         }
@@ -803,7 +799,6 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         .layout_key = info.LayoutKey(),
         .generation = registry_generation.load(std::memory_order_relaxed),
         .image_id = image_id,
-        .image_uid = image.image_uid,
         .view_mip = view_mip,
         .view_slice = view_slice,
     };

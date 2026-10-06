@@ -445,7 +445,6 @@ private:
         std::array<u32, 6> layout_key{};
         u64 generation = ~0ULL;
         ImageId image_id{};
-        u64 image_uid = 0;
         int view_mip = -1;
         int view_slice = -1;
     };
