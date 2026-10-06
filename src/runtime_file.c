@@ -43,14 +43,7 @@ typedef struct {
 _Static_assert(sizeof(GuestStat)==120,"FreeBSD stat layout");
 
 typedef struct { char *names; size_t count, *offsets; unsigned char *types; } Listing;
-typedef struct {
-    int used, host;
-    Listing *dir;
-    size_t position;
-    char path[512];
-    int loading_ui_trace;
-    uint64_t opened_ns, first_read_ns, traced_bytes;
-} File;
+typedef struct { int used, host; Listing *dir; size_t position; char path[512]; } File;
 typedef struct { char guest[64]; char host[512]; } Mount;
 static File files[MAX_FILES];
 static Mount mounts[MAX_MOUNTS];
@@ -100,6 +93,30 @@ static int translate(const char *guest,char *out,size_t size) {
     char buffer[1024];
     if (guest[0]!='/') snprintf(buffer,sizeof(buffer),"/app0/%s",guest);
     else snprintf(buffer,sizeof(buffer),"%s",guest);
+
+    // Bloodborne 1.09 uses nowloading2.gfx for the item-card loading screen. The original
+    // 1.00/1.03 presentation is still shipped as nowloading.gfx. Redirecting the guest path
+    // gives us the classic screen without modifying, copying or replacing the user's game files.
+    // Set BB_CLASSIC_LOADING=0 only for debugging if the 1.09 screen is ever needed again.
+    static int classic_loading = -1;
+    if (classic_loading < 0) {
+        const char *e=getenv("BB_CLASSIC_LOADING");
+        classic_loading = !(e && e[0]=='0');
+    }
+    if (classic_loading) {
+        const char *suffix="/dvdroot_ps4/menu/nowloading2.gfx";
+        const size_t blen=strlen(buffer), slen=strlen(suffix);
+        if (blen>=slen && !strcmp(buffer+blen-slen,suffix)) {
+            static int announced=0;
+            buffer[blen-slen]='\0';
+            strncat(buffer,"/dvdroot_ps4/menu/nowloading.gfx",
+                    sizeof(buffer)-strlen(buffer)-1);
+            if (!announced) {
+                puts("Runtime: classic loading screen enabled (nowloading2.gfx -> nowloading.gfx)");
+                announced=1;
+            }
+        }
+    }
     for (const char *p=buffer;(p=strstr(p,".."));p+=2)
         if ((p==buffer || p[-1]=='/') && (p[2]==0 || p[2]=='/')) return EACCES;
     host_lock(&lock);
@@ -194,28 +211,6 @@ static File *get(int fd) {
 }
 /* BB_AUDIO_TRACE=1: sound file opens and failed reads (missing game sounds). */
 static int audio_trace(void) { static int v=-1; if (v<0) { const char *e=getenv("BB_AUDIO_TRACE"); v=e && e[0]=='1'; } return v; }
-
-/* BB_LOADING_UI_LOG=1: loading/menu resource timing. Enabled by launcher Detailed Logs. */
-static int loading_ui_trace(void) {
-    static int v=-1;
-    if (v<0) {
-        const char *e=getenv("BB_LOADING_UI_LOG");
-        v=e && e[0]=='1';
-    }
-    return v;
-}
-static int loading_ui_path(const char *p) {
-    if (!p || !*p) return 0;
-    return strstr(p,"/dvdroot_ps4/menu/") != NULL ||
-           (strstr(p,".tpf") && (strstr(p,"item") || strstr(p,"icon") || strstr(p,"loading")));
-}
-static uint64_t loading_ui_start_ns;
-static uint64_t loading_ui_ms(void) {
-    uint64_t now=host_monotonic_ns();
-    if (!loading_ui_start_ns) loading_ui_start_ns=now;
-    return (now-loading_ui_start_ns)/1000000u;
-}
-
 /* Game mounts (including linked mod overlays) are read-only. Saves use other mounts. */
 static int game_path(const char *p) {
     if (!p || !*p) return 0;
@@ -225,10 +220,6 @@ static int game_path(const char *p) {
 }
 /* All operations return >=0 or -(host errno); wrappers adapt the convention. */
 static int64_t do_open(const char *guest,int flags,int mode) {
-    const int trace_loading_ui = loading_ui_trace() && loading_ui_path(guest);
-    if (trace_loading_ui)
-        printf("LoadingUI: open-request t_ms=%llu path=%s flags=0x%x mode=%o\n",
-               (unsigned long long)loading_ui_ms(),guest?guest:"(null)",flags,mode);
     if (game_path(guest) && (flags & (3|0x8|0x200|0x400|0x800))) return -EROFS;
     char path[1024];
     int e=translate(guest,path,sizeof(path));
@@ -247,13 +238,7 @@ static int64_t do_open(const char *guest,int flags,int mode) {
     host=open(path,host_flags(flags),mode ? mode : 0644);
     if (host<0) {
         e=errno;
-        if (e==ENOENT) {
-            ++missing;
-            printf("Runtime: open(%s) -> not found\n",guest);
-            if (trace_loading_ui)
-                printf("LoadingUI: open-miss t_ms=%llu path=%s\n",
-                       (unsigned long long)loading_ui_ms(),guest);
-        }
+        if (e==ENOENT) { ++missing; printf("Runtime: open(%s) -> not found\n",guest); }
         return -e;
     }
     if (!host_fstat(host,&s) && S_ISDIR(s.st_mode)) dir=list_directory(path);
@@ -264,12 +249,6 @@ static int64_t do_open(const char *guest,int flags,int mode) {
     if (fd<0) { host_unlock(&lock); if (host>=0) close(host); free_listing(dir); return -EMFILE; }
     files[fd]=(File){.used=1,.host=host,.dir=dir};
     snprintf(files[fd].path,sizeof(files[fd].path),"%s",guest);
-    if (trace_loading_ui) {
-        files[fd].loading_ui_trace=1;
-        files[fd].opened_ns=host_monotonic_ns();
-        printf("LoadingUI: open-ok t_ms=%llu fd=%d size=%lld path=%s\n",
-               (unsigned long long)loading_ui_ms(),fd,(long long)s.st_size,guest);
-    }
     ++opens;
     host_unlock(&lock);
     if (audio_trace() && strstr(guest,"sound/")) printf("Audio trace: open(%s) -> fd %d, %lld bytes\n",guest,fd,(long long)s.st_size);
@@ -291,14 +270,6 @@ static int64_t do_close(int fd) {
     host_lock(&lock);
     File *f=get(fd);
     if (!f) { host_unlock(&lock); return -EBADF; }
-    if (f->loading_ui_trace) {
-        uint64_t now=host_monotonic_ns();
-        printf("LoadingUI: close t_ms=%llu fd=%d life_ms=%llu first_read_ms=%lld bytes=%llu path=%s\n",
-               (unsigned long long)loading_ui_ms(),fd,
-               (unsigned long long)((now-f->opened_ns)/1000000u),
-               f->first_read_ns ? (long long)((f->first_read_ns-f->opened_ns)/1000000u) : -1LL,
-               (unsigned long long)f->traced_bytes,f->path);
-    }
     if (f->host>=0) close(f->host);
     free_listing(f->dir);
     *f=(File){0};
@@ -327,15 +298,6 @@ static int64_t do_read(int fd,void *buffer,uint64_t size) {
     touch_for_write(buffer,size);
     ssize_t n=read(h,buffer,size);
     if (n<0) { if (audio_trace()) printf("Audio trace: read(fd %d, %llu) failed, errno %d\n",fd,(unsigned long long)size,errno); return -errno; }
-    File *tf=get(fd);
-    if (tf && tf->loading_ui_trace && n>0) {
-        if (!tf->first_read_ns) {
-            tf->first_read_ns=host_monotonic_ns();
-            printf("LoadingUI: first-read t_ms=%llu fd=%d bytes=%lld path=%s\n",
-                   (unsigned long long)loading_ui_ms(),fd,(long long)n,tf->path);
-        }
-        tf->traced_bytes+=(uint64_t)n;
-    }
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
     return n;
 }
@@ -345,15 +307,6 @@ static int64_t do_pread(int fd,void *buffer,uint64_t size,int64_t offset) {
     touch_for_write(buffer,size);
     ssize_t n=pread(h,buffer,size,offset);
     if (n<0) { if (audio_trace()) printf("Audio trace: pread(fd %d, %llu @%lld) failed, errno %d\n",fd,(unsigned long long)size,(long long)offset,errno); return -errno; }
-    File *tf=get(fd);
-    if (tf && tf->loading_ui_trace && n>0) {
-        if (!tf->first_read_ns) {
-            tf->first_read_ns=host_monotonic_ns();
-            printf("LoadingUI: first-pread t_ms=%llu fd=%d bytes=%lld offset=%lld path=%s\n",
-                   (unsigned long long)loading_ui_ms(),fd,(long long)n,(long long)offset,tf->path);
-        }
-        tf->traced_bytes+=(uint64_t)n;
-    }
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
     return n;
 }

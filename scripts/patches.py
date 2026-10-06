@@ -269,9 +269,6 @@ def main():
         return
     names=FPS_PRESETS[a.fps]+[n.strip() for n in a.extra.split(';') if n.strip()]
     names+=[n for n in effect_patches(read_settings(a.settings)) if n not in names]
-    if os.environ.get('BB_DISABLE_SKIP_INTRO_PATCH')=='1' and 'Skip Intro' in names:
-        names.remove('Skip Intro')
-        print('Patches: Detailed Logs diagnostic mode disabled Skip Intro (avoids /menu/.gfx empty-name probes)')
     validate_patch_requirements(names,a.game_dir)
     segments=eboot_segments((a.out/'eboot.elf').read_bytes())
     writes=compile_patches(a.xml,names,a.app_version,segments)

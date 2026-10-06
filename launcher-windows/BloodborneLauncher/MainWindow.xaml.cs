@@ -379,9 +379,6 @@ public partial class MainWindow : Window
             if (state.DeveloperMode && state.DetailedLogs)
             {
                 psi.Environment["BB_DLSS_LOG"] = "1";
-                psi.Environment["BB_IMAGE_OVERLAP_LOG"] = "1";
-                psi.Environment["BB_LOADING_UI_LOG"] = "1";
-                psi.Environment["BB_DISABLE_SKIP_INTRO_PATCH"] = "1";
                 psi.Environment["BB_DIRECT_IMAGE_BARRIERS"] = "1";
             }
             if (state.DeveloperMode && state.FrameStats) psi.Environment["BB_FRAME_STATS"] = "1";

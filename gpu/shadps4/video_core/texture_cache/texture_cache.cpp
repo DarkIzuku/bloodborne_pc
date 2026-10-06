@@ -2,9 +2,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <xxhash.h>
-#include <chrono>
-#include <mutex>
-#include <unordered_map>
 
 #include "bbport_toggles.h"
 #include "common/assert.h"
@@ -73,68 +70,6 @@ void TraceOverlap(const ImageInfo& requested, Binding binding, ImageId id, const
         cached.resources.layers, static_cast<unsigned long long>(u64(cached.type)),
         candidate ? unsigned(candidate->binding.is_bound) : 0u,
         candidate ? unsigned(candidate->binding.is_target) : 0u, mip, slice);
-    std::fflush(stdout);
-}
-
-u64 UiTextureDiagMs() {
-    static const auto start = std::chrono::steady_clock::now();
-    return static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                std::chrono::steady_clock::now() - start)
-                                .count());
-}
-
-bool UiTextureDiagCandidate(const ImageInfo& info) {
-    if (!ImageOverlapLogging() || info.props.is_depth || info.resources.layers != 1 ||
-        info.size.depth != 1) {
-        return false;
-    }
-    const u32 max_dim = std::max(info.size.width, info.size.height);
-    const u32 min_dim = std::min(info.size.width, info.size.height);
-    return min_dim >= 32 && max_dim <= 256;
-}
-
-struct UiTextureDiagState {
-    const void* backing = nullptr;
-    u64 view = 0;
-    u32 binds = 0;
-};
-
-void TraceUiTextureBind(Image& image, ImageView& view, bool dirty_before, u64 refresh_us,
-                        u64 tick) {
-    if (!UiTextureDiagCandidate(image.info)) {
-        return;
-    }
-    const u64 view_handle = static_cast<u64>(reinterpret_cast<uintptr_t>(
-        static_cast<VkImageView>(*view.image_view)));
-    bool emit = false;
-    u32 bind_index = 0;
-    {
-        static std::mutex diag_mutex;
-        static std::unordered_map<u64, UiTextureDiagState> states;
-        std::scoped_lock lk{diag_mutex};
-        auto& state = states[image.image_uid];
-        bind_index = state.binds++;
-        emit = bind_index == 0 || state.backing != image.backing || state.view != view_handle ||
-               dirty_before;
-        state.backing = image.backing;
-        state.view = view_handle;
-    }
-    if (!emit) {
-        return;
-    }
-    std::printf(
-        "TextureDiag ui-bind: t_ms=%llu tick=%llu uid=%llu addr=0x%llx size=%llu "
-        "fmt=%s dim=%ux%u mips=%u image_backing=%p view=0x%llx bind=%u "
-        "dirty_before=%u refresh_us=%llu\n",
-        static_cast<unsigned long long>(UiTextureDiagMs()),
-        static_cast<unsigned long long>(tick),
-        static_cast<unsigned long long>(image.image_uid),
-        static_cast<unsigned long long>(image.info.guest_address),
-        static_cast<unsigned long long>(image.info.guest_size),
-        vk::to_string(image.info.pixel_format).c_str(), image.info.size.width,
-        image.info.size.height, image.info.resources.levels,
-        static_cast<void*>(image.backing), static_cast<unsigned long long>(view_handle),
-        bind_index, dirty_before ? 1u : 0u, static_cast<unsigned long long>(refresh_us));
     std::fflush(stdout);
 }
 
@@ -341,23 +276,6 @@ void TextureCache::InvalidateMemory(VAddr addr, size_t size) {
         if (image.Overlaps(addr, size)) {
             // Modified region overlaps image, so the image was definitely accessed by this fault.
             // Untrack the image, so that the range is unprotected and the guest can write freely.
-            if (image.usage.texture && UiTextureDiagCandidate(image.info)) {
-                static std::atomic<u64> ui_dirty_lines{0};
-                const u64 n = ui_dirty_lines.fetch_add(1, std::memory_order_relaxed);
-                if (n < 1024 || (n % 4096) == 0) {
-                    std::printf(
-                        "TextureDiag ui-dirty: t_ms=%llu addr=0x%llx write=0x%llx+%llu "
-                        "uid=%llu dim=%ux%u fmt=%s\n",
-                        static_cast<unsigned long long>(UiTextureDiagMs()),
-                        static_cast<unsigned long long>(image.info.guest_address),
-                        static_cast<unsigned long long>(addr),
-                        static_cast<unsigned long long>(size),
-                        static_cast<unsigned long long>(image.image_uid),
-                        image.info.size.width, image.info.size.height,
-                        vk::to_string(image.info.pixel_format).c_str());
-                    std::fflush(stdout);
-                }
-            }
             image.flags |= ImageFlagBits::CpuDirty;
             UntrackImage(image_id);
         } else if (pages_end < image_end) {
@@ -756,37 +674,14 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         }
     }
     // Create and register a new image
-    bool created_now = false;
     if (!image_id) {
         view_mip = view_slice = -1;
         TraceOverlap(info, desc.type, {}, nullptr, "create", "no candidate covers requested view");
         image_id = slot_images.insert(instance, runtime, slot_image_views, info);
         RegisterImage(image_id);
-        created_now = true;
     }
 
     Image& image = slot_images[image_id];
-    if (desc.type == BindingType::Texture && UiTextureDiagCandidate(info)) {
-        static std::atomic<u64> ui_find_lines{0};
-        const u64 n = ui_find_lines.fetch_add(1, std::memory_order_relaxed);
-        if (n < 2048 || (n % 4096) == 0) {
-            std::printf(
-                "TextureDiag ui-find: t_ms=%llu tick=%llu addr=0x%llx size=%llu fmt=%s "
-                "dim=%ux%u mips=%u image=%u uid=%llu created=%u gen=%llu view_mip=%d "
-                "view_slice=%d\n",
-                static_cast<unsigned long long>(UiTextureDiagMs()),
-                static_cast<unsigned long long>(scheduler.CurrentTick()),
-                static_cast<unsigned long long>(info.guest_address),
-                static_cast<unsigned long long>(info.guest_size),
-                vk::to_string(info.pixel_format).c_str(), info.size.width, info.size.height,
-                info.resources.levels, image_id.index,
-                static_cast<unsigned long long>(image.image_uid), created_now ? 1u : 0u,
-                static_cast<unsigned long long>(
-                    registry_generation.load(std::memory_order_relaxed)),
-                view_mip, view_slice);
-            std::fflush(stdout);
-        }
-    }
     image.tick_accessed_last = scheduler.CurrentTick();
     TouchImage(image);
 
@@ -858,38 +753,23 @@ ImageView& TextureCache::FindTexture(ImageId image_id, const ImageDesc& desc, Vi
             download_images.emplace(image_id);
         }
     }
-
-    const bool dirty_before = True(image.flags & ImageFlagBits::Dirty);
-    const auto refresh_begin = std::chrono::steady_clock::now();
     if (refresh) {
         UpdateImage(image_id);
     }
-    const u64 refresh_us = static_cast<u64>(std::chrono::duration_cast<std::chrono::microseconds>(
-                                                std::chrono::steady_clock::now() - refresh_begin)
-                                                .count());
-
-    ImageView* result = nullptr;
     if (memo && !BbToggle::Disabled(BbToggle::TextureViewMemo)) {
         if (memo->image_id == image_id && memo->backing == image.backing && memo->view_id) {
-            result = &slot_image_views[memo->view_id];
-        } else {
-            ImageView& view = image.FindView(desc.view_info);
-            const auto& ids = image.backing->image_view_ids;
-            const u32 last = image.backing->last_view;
-            memo->image_id = image_id;
-            memo->backing = image.backing;
-            memo->view_id =
-                last < ids.size() && &slot_image_views[ids[last]] == &view ? ids[last] : ids.back();
-            result = &view;
+            return slot_image_views[memo->view_id];
         }
-    } else {
-        result = &image.FindView(desc.view_info);
+        ImageView& view = image.FindView(desc.view_info);
+        const auto& ids = image.backing->image_view_ids;
+        const u32 last = image.backing->last_view;
+        memo->image_id = image_id;
+        memo->backing = image.backing;
+        memo->view_id = last < ids.size() && &slot_image_views[ids[last]] == &view ? ids[last]
+                                                                                    : ids.back();
+        return view;
     }
-
-    if (desc.type == BindingType::Texture) {
-        TraceUiTextureBind(image, *result, dirty_before, refresh_us, scheduler.CurrentTick());
-    }
-    return *result;
+    return image.FindView(desc.view_info);
 }
 
 ImageView& TextureCache::FindRenderTarget(ImageId image_id, const ImageDesc& desc) {
