@@ -1,4 +1,5 @@
 name: Windows Offline Build
+# buildcheck-trigger: runtime-recovery-stub
 
 on:
   workflow_dispatch:
