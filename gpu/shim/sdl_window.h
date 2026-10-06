@@ -45,6 +45,10 @@ private:
     void UpdateTextTitle();
     SDL_Window* window{};
     WindowSystemInfo window_info{};
+#ifdef _WIN32
+    void* win_icon_big{};
+    void* win_icon_small{};
+#endif
 };
 
 } // namespace Frontend
