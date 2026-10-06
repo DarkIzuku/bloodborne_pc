@@ -10,6 +10,7 @@ on:
     paths:
       - "src/**"
       - "gpu/**"
+      - "tests/**"
       - "scripts/**"
       - "tools/**"
       - "launcher-windows/**"
