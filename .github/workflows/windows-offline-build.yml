@@ -61,7 +61,15 @@ jobs:
         run: |
           export CC=clang
           export CXX=clang++
+          set +e
           bash build.sh
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "===== extended GPU build failure context ====="
+            tail -n 180 out/gpu-build.log || true
+            exit "$rc"
+          fi
 
       - name: Build and run precache regression tests
         shell: msys2 {0}
