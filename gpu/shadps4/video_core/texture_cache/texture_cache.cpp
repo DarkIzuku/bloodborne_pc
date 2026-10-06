@@ -79,9 +79,7 @@ void TraceOverlap(const ImageInfo& requested, Binding binding, ImageId id, const
 // Reserve host capacity only for small, single-layer sampled 2D textures. Guest-visible levels
 // remain unchanged until the game actually exposes them, so no unread guest memory is sampled.
 u32 ReservedHostMipLevels(const ImageInfo& info, Binding binding) {
-    const bool sampled_or_storage =
-        binding == Binding::Texture || binding == Binding::Storage;
-    if (!sampled_or_storage || info.props.is_depth || info.num_samples != 1 ||
+    if (binding != Binding::Texture || info.props.is_depth || info.num_samples != 1 ||
         info.resources.levels != 1 || info.resources.layers != 1 || info.size.depth != 1) {
         return info.resources.levels;
     }
@@ -98,13 +96,11 @@ u32 ReservedHostMipLevels(const ImageInfo& info, Binding binding) {
 
 bool CanPromoteMipChainInPlace(const ImageInfo& next, const Image& image, Binding binding) {
     const auto& current = image.info;
-    const bool sampled = binding == Binding::Texture;
-    const bool storage = binding == Binding::Storage;
-    if ((!sampled && !storage) || !image.backing || current.props.is_depth ||
+    if (binding != Binding::Texture || !image.backing || current.props.is_depth ||
         current.num_samples != 1 || current.resources.layers != 1 || next.resources.layers != 1 ||
-        current.size.depth != 1 || next.size.depth != 1 ||
+        current.size.depth != 1 || next.size.depth != 1 || image.usage.storage ||
         image.usage.render_target || image.usage.depth_target ||
-        (sampled && (image.usage.storage || True(image.flags & ImageFlagBits::GpuModified))) ||
+        True(image.flags & ImageFlagBits::GpuModified) ||
         next.resources.levels <= current.resources.levels ||
         next.resources.levels > image.backing->image.image_ci.mipLevels ||
         next.guest_address != current.guest_address || next.guest_size < current.guest_size ||
@@ -626,30 +622,16 @@ ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id,
             }
         });
         ++registry_generation;
-
-        // Storage mip chains (used by Bloodborne's GPU mip-generation passes) already contain
-        // GPU-owned data in the old levels. Re-uploading the whole expanded guest range here
-        // would overwrite that data with stale CPU memory and is exactly the kind of one-frame
-        // corruption that shows up as a blinking loading-screen image. Keep the existing GPU
-        // contents and only extend tracking; the new storage levels are populated by the guest's
-        // following dispatches. Plain sampled textures still upload newly exposed guest mips.
-        const bool preserve_gpu_storage =
-            binding == BindingType::Storage &&
-            (existing.usage.storage || True(existing.flags & ImageFlagBits::GpuModified));
+        existing.flags |= ImageFlagBits::CpuDirty;
+        RefreshImage(existing);
         TrackImage(image_id);
-        if (!preserve_gpu_storage) {
-            existing.flags |= ImageFlagBits::CpuDirty;
-            RefreshImage(existing);
-        }
-
         if (ImageOverlapLogging()) {
             std::printf(
                 "TextureDiag mip-promote: image=%u addr=0x%llx levels=%u->%u host=%u "
-                "guest_size=%u->%u backing=%p mode=%s\n",
+                "guest_size=%u->%u backing=%p\n",
                 image_id.index, static_cast<unsigned long long>(info.guest_address), old_levels,
                 new_levels, existing.backing->image.image_ci.mipLevels, old_size, info.guest_size,
-                static_cast<void*>(existing.backing),
-                preserve_gpu_storage ? "storage-preserve" : "sampled-upload");
+                static_cast<void*>(existing.backing));
             std::fflush(stdout);
         }
         return image_id;
