@@ -24,6 +24,8 @@ class ObjectMotion {
 public:
     ObjectMotion(const Instance& instance, Scheduler& scheduler);
     ~ObjectMotion();
+    static vk::UniqueDescriptorSetLayout CreateAddressLayout(vk::Device device);
+    void BindAddresses(vk::PipelineLayout layout);
 
     [[nodiscard]] bool Enabled() const noexcept {
         return enabled;
@@ -82,6 +84,11 @@ private:
     u32* params_mapped{};
     vk::Buffer positions_buffer{};
     VmaAllocation positions_allocation{};
+    vk::Buffer address_buffer{};
+    VmaAllocation address_allocation{};
+    vk::UniqueDescriptorSetLayout address_layout;
+    vk::UniqueDescriptorPool address_pool;
+    vk::DescriptorSet address_set;
 
     u64 frame = 0;
     u32 params_used = 0;

@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 #include <vk_mem_alloc.h>
 #include "bbport_settings.h"
@@ -17,11 +18,12 @@ namespace Vulkan {
 namespace {
 
 bool CreateBuffer(const Instance& instance, vk::DeviceSize size, bool host, vk::Buffer& buffer,
-                  VmaAllocation& allocation, void** mapped, u64& address) {
+                  VmaAllocation& allocation, void** mapped, u64& address,
+                  VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT) {
     const VkBufferCreateInfo buffer_ci{
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = size,
-        .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+        .usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
     };
     VmaAllocationCreateInfo alloc_ci{
         .usage = VMA_MEMORY_USAGE_AUTO,
@@ -49,6 +51,29 @@ bool CreateBuffer(const Instance& instance, vk::DeviceSize size, bool host, vk::
 
 } // namespace
 
+vk::UniqueDescriptorSetLayout ObjectMotion::CreateAddressLayout(vk::Device device) {
+    const vk::DescriptorSetLayoutBinding binding{
+        .binding = Shader::MotionVectors::AddressBinding,
+        .descriptorType = vk::DescriptorType::eUniformBuffer,
+        .descriptorCount = 1,
+        .stageFlags = vk::ShaderStageFlagBits::eVertex,
+    };
+    auto [result, layout] = device.createDescriptorSetLayoutUnique(
+        {.bindingCount = 1, .pBindings = &binding});
+    if (result != vk::Result::eSuccess) {
+        throw std::runtime_error("Cannot create object-motion address layout");
+    }
+    return std::move(layout);
+}
+
+void ObjectMotion::BindAddresses(vk::PipelineLayout layout) {
+    ASSERT(enabled && address_set);
+    scheduler.Record([layout, set = address_set](vk::CommandBuffer command) {
+        command.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout,
+                                   Shader::MotionVectors::DescriptorSet, set, {});
+    });
+}
+
 ObjectMotion::ObjectMotion(const Instance& instance_, Scheduler& scheduler_)
     : instance{instance_}, scheduler{scheduler_} {
     // Pipeline selection limits the extra attachment and vertex stores to likely
@@ -74,8 +99,53 @@ ObjectMotion::ObjectMotion(const Instance& instance_, Scheduler& scheduler_)
     }
     params_mapped = static_cast<u32*>(mapped);
     std::memset(params_mapped, 0, 32);
-    Shader::MotionVectors::params_address = params_address;
-    Shader::MotionVectors::positions_address = positions_address;
+    // Immutable until destruction, after scheduler.Finish(). Parameters and position history
+    // retain their existing rings/barriers; only their base addresses move out of SPIR-V.
+    // A small UBO avoids a >128 MiB SSBO descriptor (not portable on all supported devices).
+    u64 unused_address{};
+    if (!CreateBuffer(instance, sizeof(Shader::MotionVectors::Addresses), true, address_buffer,
+                      address_allocation, &mapped, unused_address, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) {
+        std::puts("Object motion: address table allocation failed, off");
+        return;
+    }
+    const Shader::MotionVectors::Addresses addresses{params_address, positions_address};
+    std::memcpy(mapped, &addresses, sizeof(addresses));
+    const auto device = instance.GetDevice();
+    try {
+        address_layout = CreateAddressLayout(device);
+    } catch (const std::exception&) {
+        // Complete construction in the disabled state so our destructor owns the buffers
+        // already allocated above, just as on the other optional-motion allocation failures.
+        std::puts("Object motion: descriptor layout allocation failed, off");
+        return;
+    }
+    const vk::DescriptorPoolSize pool_size{vk::DescriptorType::eUniformBuffer, 1};
+    auto [pool_result, pool] = device.createDescriptorPoolUnique(
+        {.maxSets = 1, .poolSizeCount = 1, .pPoolSizes = &pool_size});
+    if (pool_result != vk::Result::eSuccess) {
+        std::puts("Object motion: descriptor pool allocation failed, off");
+        return;
+    }
+    address_pool = std::move(pool);
+    const vk::DescriptorSetLayout layout = *address_layout;
+    auto [set_result, sets] = device.allocateDescriptorSets(
+        {.descriptorPool = *address_pool, .descriptorSetCount = 1, .pSetLayouts = &layout});
+    if (set_result != vk::Result::eSuccess) {
+        std::puts("Object motion: descriptor allocation failed, off");
+        return;
+    }
+    address_set = sets[0];
+    const vk::DescriptorBufferInfo buffer_info{
+        .buffer = address_buffer, .offset = 0, .range = sizeof(addresses),
+    };
+    const vk::WriteDescriptorSet write{
+        .dstSet = address_set,
+        .dstBinding = Shader::MotionVectors::AddressBinding,
+        .descriptorCount = 1,
+        .descriptorType = vk::DescriptorType::eUniformBuffer,
+        .pBufferInfo = &buffer_info,
+    };
+    device.updateDescriptorSets(write, {});
     enabled = true;
     std::printf("Object motion: on (%u vertices per frame)\n", PositionsPerFrame);
 }
@@ -83,6 +153,9 @@ ObjectMotion::ObjectMotion(const Instance& instance_, Scheduler& scheduler_)
 ObjectMotion::~ObjectMotion() {
     scheduler.Finish();
     const auto allocator = instance.GetAllocator();
+    if (address_buffer) {
+        vmaDestroyBuffer(allocator, address_buffer, address_allocation);
+    }
     if (params_buffer) {
         vmaDestroyBuffer(allocator, params_buffer, params_allocation);
     }

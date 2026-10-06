@@ -114,6 +114,7 @@ private:
 
 private:
     GraphicsPipelineKey key;
+    vk::UniqueDescriptorSetLayout motion_address_layout;
     std::optional<const Shader::Gcn::FetchShaderData> fetch_shader{};
 };
 

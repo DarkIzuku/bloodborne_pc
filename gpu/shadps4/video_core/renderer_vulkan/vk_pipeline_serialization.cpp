@@ -16,6 +16,7 @@
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
 static constexpr u32 ShaderBinaryVersion = 7u; // bbport: interpolated integer fix (Pascal)
+static constexpr u32 MotionShaderBinaryVersion = 8u; // runtime address descriptor, set 1
 static constexpr u32 ShaderMetaVersion = 7u; // bbport: ImageResource::needs_native
 static constexpr u32 PipelineKeyVersion = 6u; // pointer-free pipeline state + generated fragment
 } // namespace Serialization
@@ -72,7 +73,10 @@ void RegisterShaderMeta(const Shader::Info& info,
     Serialization::Writer meta{ar};
 
     meta.Write(Serialization::ShaderMetaVersion);
-    meta.Write(Serialization::ShaderBinaryVersion);
+    const bool vertex_motion = info.hw_stage == Shader::HwStage::Vertex &&
+                               spec.runtime_info.hw.vs.motion_vectors;
+    meta.Write(vertex_motion ? Serialization::MotionShaderBinaryVersion
+                             : Serialization::ShaderBinaryVersion);
 
     meta.Write(perm_hash);
     meta.Write(perm_idx);
@@ -107,7 +111,8 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
 
     u32 binary_version{};
     meta.Read(binary_version);
-    if (binary_version != Serialization::ShaderBinaryVersion) {
+    if (binary_version != Serialization::ShaderBinaryVersion &&
+        binary_version != Serialization::MotionShaderBinaryVersion) {
         return false;
     }
 
@@ -123,9 +128,12 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
         return false;
     }
 
-    // Motion vertex shaders embed session-local buffer device addresses. They must be
-    // recompiled for the current allocation, never loaded from a previous process.
-    if (info.hw_stage == Shader::HwStage::Vertex && spec.runtime_info.hw.vs.motion_vectors) {
+    // Only old motion vertex binaries embed process-local addresses. Other v7 shaders remain
+    // reusable; v8 motion binaries load the current addresses from a renderer-owned descriptor.
+    const bool vertex_motion = info.hw_stage == Shader::HwStage::Vertex &&
+                               spec.runtime_info.hw.vs.motion_vectors;
+    if (binary_version != (vertex_motion ? Serialization::MotionShaderBinaryVersion
+                                        : Serialization::ShaderBinaryVersion)) {
         return false;
     }
 
@@ -254,6 +262,10 @@ bool GraphicsPipeline::SerializationSupport::Deserialize(Serialization::Archive&
 
 bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar, bool legacy) {
     sel.graphics_key.Deserialize(ar);
+    if (sel.graphics_key.motion_vectors &&
+        !instance.GetPhysicalDevice().getFeatures().vertexPipelineStoresAndAtomics) {
+        return false;
+    }
 
     GraphicsPipeline::SerializationSupport sdata{};
     if (!sdata.Deserialize(ar, legacy)) {

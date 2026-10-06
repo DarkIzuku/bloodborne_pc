@@ -139,6 +139,8 @@ public:
     static PrecacheProgress GetPrecacheProgress();
     // The port's window-close path uses _Exit, so it cannot rely on destructors.
     static void SaveAllForShutdown();
+    // Set once before Liverpool can submit draws or preparation work.
+    void SetObjectMotionEnabled(bool enabled) { object_motion_enabled = enabled; }
 
     bool LoadComputePipeline(Serialization::Archive& ar);
     bool LoadGraphicsPipeline(Serialization::Archive& ar, bool legacy);
@@ -222,6 +224,7 @@ private:
     PipelineSelection sel{}; ///< GPU thread selection state
     ComputePipelineKey compute_key{};
     u32 num_new_pipelines{}; // new pipelines added to the cache since the game start
+    bool object_motion_enabled{};
 
     // Only if Config::collectShadersForDebug()
     tsl::robin_map<vk::ShaderModule,
