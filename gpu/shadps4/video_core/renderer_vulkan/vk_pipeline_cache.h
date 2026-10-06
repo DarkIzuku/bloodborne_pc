@@ -4,6 +4,7 @@
 #pragma once
 
 #include <unordered_map>
+#include <mutex>
 #include <shared_mutex>
 #include <variant>
 #include <boost/container/static_vector.hpp>
@@ -114,6 +115,17 @@ struct PrepWorker {
 
 struct PreparedDraw;
 
+struct PrecacheProgress {
+    u32 total{};
+    u32 loaded{};
+    u32 rejected{};
+    bool complete{};
+
+    float Fraction() const {
+        return total ? float(loaded + rejected) / total : (complete ? 1.0f : 0.0f);
+    }
+};
+
 class PipelineCache {
 public:
     explicit PipelineCache(const Instance& instance, Scheduler& scheduler,
@@ -123,9 +135,14 @@ public:
     void WarmUp();
     void Sync();
 
+    // Available even while the renderer constructor is running WarmUp().
+    static PrecacheProgress GetPrecacheProgress();
+    // The port's window-close path uses _Exit, so it cannot rely on destructors.
+    static void SaveAllForShutdown();
+
     bool LoadComputePipeline(Serialization::Archive& ar);
-    bool LoadGraphicsPipeline(Serialization::Archive& ar);
-    bool LoadPipelineStage(Serialization::Archive& ar, size_t stage);
+    bool LoadGraphicsPipeline(Serialization::Archive& ar, bool legacy);
+    bool LoadPipelineStage(Serialization::Archive& ar, size_t stage, u64 expected_hash);
 
     const GraphicsPipeline* GetGraphicsPipeline(const DrawIndirectParams params = {},
                                                 const PreparedDraw* prepared = nullptr);
@@ -161,6 +178,13 @@ public:
     }
 
 private:
+    void CreateNativeCache();
+    void SaveNativeCache();
+    // Only pipeline creation and shutdown snapshots take this lock, never cache hits.
+    std::mutex native_cache_mutex;
+    static std::mutex progress_mutex;
+    static PrecacheProgress precache_progress;
+
     bool RefreshGraphicsKey(PipelineSelection& sel);
     bool RefreshGraphicsStages(PipelineSelection& sel);
     bool RefreshComputeKey();

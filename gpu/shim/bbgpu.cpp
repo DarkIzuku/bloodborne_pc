@@ -231,6 +231,9 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
             SDL_Delay(2);
         }
         LOG_INFO(Frontend, "Window closed by user");
+        // _Exit skips renderer destructors. Snapshot completed pipeline work and drain its
+        // asynchronous cache writes before terminating; no gameplay queue waits are added.
+        Vulkan::PipelineCache::SaveAllForShutdown();
         std::fflush(stdout);
         std::_Exit(0);
     });

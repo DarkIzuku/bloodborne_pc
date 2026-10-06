@@ -8,6 +8,7 @@
 #include "common/types.h"
 
 #include <functional>
+#include <atomic>
 #include <thread>
 #include <vector>
 
@@ -42,11 +43,12 @@ public:
     void Load(BlobType type, const std::string& name, std::vector<u32>& data);
 
     void ForEachBlob(BlobType type, const std::function<void(std::vector<u8>&& data)>& func);
+    std::vector<std::string> ListBlobs(BlobType type) const;
 
 private:
     std::jthread io_worker{};
     std::filesystem::path cache_path{};
-    bool opened{};
+    std::atomic<bool> opened{};
 };
 
 } // namespace Storage

@@ -81,7 +81,7 @@ public:
         std::vector<u32> fragment{};
 
         void Serialize(Serialization::Archive& ar) const;
-        bool Deserialize(Serialization::Archive& ar);
+        bool Deserialize(Serialization::Archive& ar, bool legacy);
     };
 
     GraphicsPipeline(const Instance& instance, Scheduler& scheduler, DescriptorHeap& desc_heap,

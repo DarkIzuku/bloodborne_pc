@@ -11,6 +11,7 @@
 #include <unordered_set>
 
 #include "common/hash.h"
+#include "common/elf_info.h"
 #include "common/io_file.h"
 #include "common/path_util.h"
 #include "core/debug_state.h"
@@ -21,6 +22,8 @@
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/cache_storage.h"
+#include "video_core/cache_file.h"
+#include "video_core/renderer_vulkan/pipeline_cache_blob.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/motion_history.h"
 #include "video_core/renderer_vulkan/vk_draw_prep.h"
@@ -30,6 +33,111 @@
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 
 namespace Vulkan {
+
+namespace {
+struct CacheRegistry {
+    std::mutex mutex;
+    std::vector<PipelineCache*> caches;
+};
+
+CacheRegistry& Registry() {
+    // Process lifetime: presenters may be destroyed from another TU's static destructor.
+    static auto* registry = new CacheRegistry;
+    return *registry;
+}
+
+DriverCache::Identity DriverIdentity(const Instance& instance) {
+    DriverCache::Identity id{instance.GetVendorID(), instance.GetDeviceID(),
+                             instance.GetDriverVersion(), u32(instance.GetDriverID()), {}};
+    const auto uuid = instance.GetPipelineCacheUUID();
+    std::copy(uuid.begin(), uuid.end(), id.uuid.begin());
+    return id;
+}
+
+std::filesystem::path DriverCachePath() {
+    return Common::FS::GetUserPath(Common::FS::PathType::CacheDir) /
+           (Common::ElfInfo::Instance().GameSerial() + ".vkcache");
+}
+} // namespace
+
+std::mutex PipelineCache::progress_mutex;
+PrecacheProgress PipelineCache::precache_progress;
+
+PrecacheProgress PipelineCache::GetPrecacheProgress() {
+    std::scoped_lock lock{progress_mutex};
+    return precache_progress;
+}
+
+void PipelineCache::SaveAllForShutdown() {
+    std::scoped_lock lock{Registry().mutex};
+    for (auto* cache : Registry().caches) {
+        cache->Sync();
+    }
+}
+
+void PipelineCache::CreateNativeCache() {
+    std::vector<u8> file_data;
+    std::span<const u8> initial_data;
+    if (EmulatorSettings.IsPipelineCacheEnabled()) {
+        const Common::FS::IOFile file{DriverCachePath(), Common::FS::FileAccessMode::Read};
+        const auto size = file.IsOpen() ? file.GetSize() : 0;
+        if (size >= DriverCache::HeaderBytes && size <= DriverCache::MaxBytes + DriverCache::HeaderBytes) {
+            file_data.resize(size);
+            if (file.Read(file_data) == file_data.size()) {
+                initial_data = DriverCache::Decode(file_data, DriverIdentity(instance));
+            }
+        }
+        if (size && initial_data.empty()) {
+            LOG_INFO(Render_Vulkan, "Ignoring incompatible or incomplete Vulkan driver cache");
+        }
+    }
+    const vk::PipelineCacheCreateInfo info{
+        .initialDataSize = initial_data.size(),
+        .pInitialData = initial_data.empty() ? nullptr : initial_data.data(),
+    };
+    auto [result, cache] = instance.GetDevice().createPipelineCacheUnique(info);
+    if (result != vk::Result::eSuccess && !initial_data.empty()) {
+        LOG_WARNING(Render_Vulkan, "Driver rejected its pipeline cache: {}", vk::to_string(result));
+        auto [retry_result, retry_cache] = instance.GetDevice().createPipelineCacheUnique({});
+        result = retry_result;
+        cache = std::move(retry_cache);
+    }
+    ASSERT_MSG(result == vk::Result::eSuccess, "Failed to create pipeline cache: {}",
+               vk::to_string(result));
+    pipeline_cache = std::move(cache);
+}
+
+void PipelineCache::SaveNativeCache() {
+    if (!pipeline_cache || !EmulatorSettings.IsPipelineCacheEnabled()) {
+        return;
+    }
+    // Caller holds native_cache_mutex. No queue/GPU wait is needed: this is host cache data.
+    size_t size{};
+    const auto device = instance.GetDevice();
+    if (device.getPipelineCacheData(*pipeline_cache, &size, nullptr) != vk::Result::eSuccess) {
+        return;
+    }
+    size = std::min(size, DriverCache::MaxBytes);
+    std::vector<u8> payload(size);
+    const auto result = device.getPipelineCacheData(*pipeline_cache, &size, payload.data());
+    // Vulkan explicitly guarantees that even VK_INCOMPLETE data is a usable cache blob.
+    // Bounding the snapshot avoids unbounded disk/allocation growth on long sessions.
+    if (result != vk::Result::eSuccess && result != vk::Result::eIncomplete) {
+        LOG_WARNING(Render_Vulkan, "Cannot read Vulkan driver cache: {}", vk::to_string(result));
+        return;
+    }
+    payload.resize(size);
+    const auto file_data = DriverCache::Encode(payload, DriverIdentity(instance));
+    if (!file_data.empty() && !Storage::ReplaceCacheFile(DriverCachePath(), file_data)) {
+        LOG_WARNING(Render_Vulkan, "Cannot save Vulkan driver cache; keeping the previous file");
+    }
+}
+
+PipelineCache::~PipelineCache() {
+    std::scoped_lock lock{Registry().mutex};
+    std::erase(Registry().caches, this);
+    Sync();
+}
 
 using Shader::HwStage;
 using Shader::Output;
@@ -345,15 +453,12 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
         .supports_shader_stencil_export = instance_.IsShaderStencilExportSupported(),
     };
+    CreateNativeCache();
     WarmUp();
-
-    auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique({});
-    ASSERT_MSG(cache_result == vk::Result::eSuccess, "Failed to create pipeline cache: {}",
-               vk::to_string(cache_result));
-    pipeline_cache = std::move(cache);
+    std::scoped_lock lock{Registry().mutex};
+    Registry().caches.push_back(this);
 }
 
-PipelineCache::~PipelineCache() = default;
 
 // bbport: shader/pipeline compile time on the GPU thread, reported by BB_FRAME_STATS.
 std::atomic<u64> g_bb_compile_ns;
@@ -431,6 +536,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         CompileTimer timer;
 
         GraphicsPipeline::SerializationSupport sdata{};
+        std::scoped_lock cache_lock{native_cache_mutex};
         it.value() = std::make_unique<GraphicsPipeline>(
             instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache, sel.infos,
             sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
@@ -462,6 +568,7 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         CompileTimer timer;
 
         ComputePipeline::SerializationSupport sdata{};
+        std::scoped_lock cache_lock{native_cache_mutex};
         it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
                                                        *pipeline_cache, compute_key, *sel.infos[0],
                                                        sel.modules[0], sdata, false);

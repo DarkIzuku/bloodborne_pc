@@ -210,6 +210,13 @@ else()
 endif()
 
 # Explicit test targets; neither launches the game nor needs a Vulkan device.
+add_executable(pipeline-cache-blob-test EXCLUDE_FROM_ALL ../tests/test_pipeline_cache_blob.cpp)
+target_compile_options(pipeline-cache-blob-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(pipeline-cache-blob-test PRIVATE ..)
+add_executable(pipeline-archive-test EXCLUDE_FROM_ALL ../tests/test_pipeline_archive.cpp)
+target_compile_options(pipeline-archive-test PRIVATE -UNDEBUG)
+target_include_directories(pipeline-archive-test PRIVATE shadps4)
+target_link_libraries(pipeline-archive-test PRIVATE fmt::fmt)
 add_executable(motion-history-test EXCLUDE_FROM_ALL ../tests/test_motion_history.cpp)
 target_compile_options(motion-history-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(motion-history-test PRIVATE ..)
