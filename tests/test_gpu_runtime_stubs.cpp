@@ -3,10 +3,17 @@
 #include <chrono>
 #include <cstdint>
 #include <cstddef>
-#include "../src/runtime.h"
+#include <setjmp.h>
+#ifdef _WIN32
+struct alignas(16) RuntimeRecoverBuf {
+    unsigned char registers[256];
+};
+#else
+typedef sigjmp_buf RuntimeRecoverBuf;
+#endif
 // Renderer tests have no guest process. Clock/host-thread services work; guest accesses abort.
 extern "C" {
-thread_local RuntimeRecoverBuf* runtime_fault_recover = nullptr;
+__thread RuntimeRecoverBuf* runtime_fault_recover = nullptr;
 uint32_t runtime_disabled_optimizations = 0;
 uint64_t runtime_tsc_frequency() { return 1000000000; }
 int runtime_file_translate(const char*, char*, size_t) { std::abort(); }
