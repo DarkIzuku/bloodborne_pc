@@ -132,6 +132,7 @@ jobs:
           cp -f launcher-publish/BloodborneLauncher.exe package/
           cp -f run.bat build.sh setup.bat package/
           cp -f out/bb-probe.exe out/bb-gpu-capabilities.exe package/out/
+          cp -f launcher-windows/BloodborneLauncher/Assets/bloodborne.ico package/out/
           test ! -f out/nvngx_dlss.dll || cp -f out/nvngx_dlss.dll package/out/
           cp -rf scripts/* package/scripts/
           test ! -d patches || cp -rf patches/* package/patches/
