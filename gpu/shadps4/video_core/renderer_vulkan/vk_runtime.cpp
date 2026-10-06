@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <boost/container/small_vector.hpp>
+#include <cstdlib>
 #include "bbport_toggles.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
@@ -826,17 +827,32 @@ void Runtime::FlushBarriers() {
     }
 
     scheduler.EndRendering();
-    scheduler.Record([memory = memory_barrier, has_memory = dep_info.memoryBarrierCount != 0,
-                      images = scheduler.RecordData(std::span<const vk::ImageMemoryBarrier2>(
-                          image_barriers.data(), image_barriers.size()))](vk::CommandBuffer cmdbuf) {
-        const vk::DependencyInfo info = {
-            .memoryBarrierCount = has_memory ? 1U : 0U,
-            .pMemoryBarriers = has_memory ? &memory : nullptr,
-            .imageMemoryBarrierCount = static_cast<u32>(images.size()),
-            .pImageMemoryBarriers = images.data(),
-        };
-        cmdbuf.pipelineBarrier2(info);
-    });
+
+    // Repeated area transitions exposed a crash inside the NVIDIA driver while an image
+    // pipelineBarrier2 was being emitted by the deferred VkRecorder thread. Upstream shadPS4
+    // records this barrier synchronously. Keep the optimized path by default, but Detailed Logs
+    // can force only image barriers onto the caller thread to isolate/avoid that lifetime/race
+    // without disabling threaded recording for every Vulkan command.
+    static const bool direct_image_barriers = [] {
+        const char* value = std::getenv("BB_DIRECT_IMAGE_BARRIERS");
+        return value && value[0] == '1';
+    }();
+
+    if (direct_image_barriers && dep_info.imageMemoryBarrierCount != 0) {
+        scheduler.CommandBuffer().pipelineBarrier2(dep_info);
+    } else {
+        scheduler.Record([memory = memory_barrier, has_memory = dep_info.memoryBarrierCount != 0,
+                          images = scheduler.RecordData(std::span<const vk::ImageMemoryBarrier2>(
+                              image_barriers.data(), image_barriers.size()))](vk::CommandBuffer cmdbuf) {
+            const vk::DependencyInfo info = {
+                .memoryBarrierCount = has_memory ? 1U : 0U,
+                .pMemoryBarriers = has_memory ? &memory : nullptr,
+                .imageMemoryBarrierCount = static_cast<u32>(images.size()),
+                .pImageMemoryBarriers = images.data(),
+            };
+            cmdbuf.pipelineBarrier2(info);
+        });
+    }
 
     memory_barrier.srcStageMask = vk::PipelineStageFlagBits2::eNone;
     memory_barrier.srcAccessMask = vk::AccessFlagBits2::eNone;
