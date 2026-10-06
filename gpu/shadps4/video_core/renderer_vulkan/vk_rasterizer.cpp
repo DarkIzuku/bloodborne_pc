@@ -24,6 +24,7 @@
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
 #include "video_core/texture_cache/image_view.h"
+#include "video_core/texture_cache/overlap_diagnostics.h"
 #include "video_core/texture_cache/texture_cache.h"
 
 namespace Vulkan {
@@ -2561,6 +2562,37 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
                        std::equal(set.hashes.begin(), set.hashes.begin() + count,
                                   prepared->image_hashes);
     if (!match) {
+        const bool generation_miss = set.key == key && set.stage == &stage && set.count == count &&
+                                     set.generation != generation;
+        if (generation_miss && VideoCore::ImageOverlapLogging()) {
+            static std::atomic<u64> generation_diag_count{0};
+            const u64 diag_index =
+                generation_diag_count.fetch_add(1, std::memory_order_relaxed);
+            if (diag_index < 256 || (diag_index % 1024) == 0) {
+                std::printf(
+                    "TextureDiag set-generation[%llu]: key=0x%llx old_gen=%llu new_gen=%llu "
+                    "old_scene_gen=%llu new_scene_gen=%llu count=%u\n",
+                    static_cast<unsigned long long>(diag_index),
+                    static_cast<unsigned long long>(key),
+                    static_cast<unsigned long long>(set.generation),
+                    static_cast<unsigned long long>(generation),
+                    static_cast<unsigned long long>(set.scene_generation),
+                    static_cast<unsigned long long>(scene_targets->Generation()), set.count);
+                for (u32 i = 0; i < set.count; ++i) {
+                    const auto& entry = set.entries[i];
+                    std::printf(
+                        "  TextureDiag entry[%u]: image=%u backing=%p view=0x%llx "
+                        "mip=%u+%u layer=%u+%u proxy=%u\n",
+                        i, entry.id.index, entry.backing,
+                        static_cast<unsigned long long>(
+                            reinterpret_cast<uintptr_t>(static_cast<VkImageView>(entry.view))),
+                        entry.range.base.level, entry.range.extent.levels,
+                        entry.range.base.layer, entry.range.extent.layers,
+                        entry.proxy ? 1u : 0u);
+                }
+                std::fflush(stdout);
+            }
+        }
         ++texture_set_why[set.key != key ? 0 : set.generation != generation ? 1 : 3];
         ++texture_set_misses;
         set.key = key;
