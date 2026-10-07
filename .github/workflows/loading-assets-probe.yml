@@ -1,4 +1,4 @@
-name: Loading assets reproduction probe
+name: Loading assets candidate bridge
 
 on:
   push:
@@ -9,59 +9,55 @@ permissions:
   contents: read
 
 jobs:
-  repro:
+  candidates:
     runs-on: ubuntu-latest
     steps:
-      - name: Reproduce final JPEGs from known public sources
+      - name: Build close deterministic candidates
         shell: bash
         run: |
           set -euo pipefail
           python -m pip install --quiet pillow==12.3.0
-          curl -A "Mozilla/5.0" -fL -sS             "https://images.wallpapersden.com/image/download/bloodborne-gaming-2023_bW5rZmmUmZqaraWkpJRmbmdlrWZlbWU.jpg"             -o /tmp/src02.jpg
+          mkdir -p candidates
           curl -A "Mozilla/5.0" -fL -sS             "https://static.zerochan.net/Bloodborne.full.2318714.jpg"             -o /tmp/src01.jpg
-          curl -A "Mozilla/5.0" -fL -sS             "https://images2.alphacoders.com/916/thumb-1920-916448.jpg"             -o /tmp/src01thumb.jpg
+          curl -A "Mozilla/5.0" -fL -sS             "https://images.wallpapersden.com/image/download/bloodborne-gaming-2023_bW5rZmmUmZqaraWkpJRmbmdlrWZlbWU.jpg"             -o /tmp/src02-generated.jpg
+          curl -A "Mozilla/5.0" -fL -sS             "https://images.wallpapersden.com/image/download/bloodborne-gaming-2023_bW5rZmmUmZqaraWkpJRmbmdlrWZrZWU.jpg"             -o /tmp/src02-original.jpg
 
           python - <<'PY'
           from PIL import Image
           from pathlib import Path
-          import hashlib
+          import hashlib, json
 
-          E1="dc2da2d1b5b8f0c8410084420770990a62fc350d5c6ade8a69e4b90ebfda0732"
-          E2="6305642ddfe111954ad57aa4399a8188d2350401a1b7e1a7f534c73ac48686fb"
+          def H(p): return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 
-          def sha(p):
-              return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+          s1=Image.open("/tmp/src01.jpg")
+          c1=s1.crop((0,0,1920,1080))
+          c1.save("candidates/re01.jpg",format="JPEG",quality=75,subsampling=0,optimize=True,xmp=s1.info.get("xmp"))
+          print("re01",Path("candidates/re01.jpg").stat().st_size,H("candidates/re01.jpg"))
 
-          def save_variant(im, out, *, xmp=None, icc=None, optimize=True):
-              kw=dict(format="JPEG",quality=75,subsampling=0,optimize=optimize)
-              if xmp: kw["xmp"]=xmp
-              if icc: kw["icc_profile"]=icc
-              im.save(out, **kw)
-              return sha(out), Path(out).stat().st_size
+          s2=Image.open("/tmp/src02-generated.jpg")
+          s2.save("candidates/re02-generated.jpg",format="JPEG",quality=75,subsampling=0,optimize=True)
+          print("re02-generated",Path("candidates/re02-generated.jpg").stat().st_size,H("candidates/re02-generated.jpg"))
 
-          s2=Image.open("/tmp/src02.jpg")
-          print("SRC02",s2.size,s2.info.keys(),len(s2.info.get("icc_profile",b"")),len(s2.info.get("xmp",b"") or b""))
-          for meta in ("both","icc","xmp","none"):
-              xmp=s2.info.get("xmp") if meta in ("both","xmp") else None
-              icc=s2.info.get("icc_profile") if meta in ("both","icc") else None
-              for opt in (True,False):
-                  out=f"/tmp/re02-{meta}-{opt}.jpg"
-                  got,size=save_variant(s2,out,xmp=xmp,icc=icc,optimize=opt)
-                  print("REPRO02",meta,opt,size,got,"MATCH" if got==E2 else "")
-
-          for srcname in ("src01.jpg","src01thumb.jpg"):
-              s1=Image.open("/tmp/"+srcname)
-              print("SRC01",srcname,s1.size,s1.info.keys(),len(s1.info.get("icc_profile",b"")),len(s1.info.get("xmp",b"") or b""))
-              if s1.width != 1920 or s1.height < 1080:
-                  continue
-              # Most likely operation for a 1920x1249 source is a centered 1920x1080 crop.
-              for y in (0, 84, 85, 169):
-                  if y+1080>s1.height: continue
-                  crop=s1.crop((0,y,1920,y+1080))
-                  for meta in ("both","xmp","none"):
-                      xmp=s1.info.get("xmp") if meta in ("both","xmp") else None
-                      icc=s1.info.get("icc_profile") if meta=="both" else None
-                      out=f"/tmp/re01-{srcname}-{y}-{meta}.jpg"
-                      got,size=save_variant(crop,out,xmp=xmp,icc=icc,optimize=True)
-                      print("REPRO01",srcname,"y",y,meta,size,got,"MATCH" if got==E1 else "")
+          so=Image.open("/tmp/src02-original.jpg")
+          print("src02-original",so.size,so.info.keys(),len(so.info.get("icc_profile",b"")),len(so.info.get("xmp",b"") or b""))
+          # Save the original source and a few natural 1920x1080 crops so local
+          # comparison can identify exactly how the user's final was produced.
+          Path("candidates/src02-original.jpg").write_bytes(Path("/tmp/src02-original.jpg").read_bytes())
+          Path("candidates/src02-generated.jpg").write_bytes(Path("/tmp/src02-generated.jpg").read_bytes())
+          for y in (0,260,520):
+              if y+1080<=so.height:
+                  crop=so.crop((0,y,1920,y+1080))
+                  kw=dict(format="JPEG",quality=75,subsampling=0,optimize=True)
+                  if so.info.get("icc_profile"): kw["icc_profile"]=so.info["icc_profile"]
+                  if so.info.get("xmp"): kw["xmp"]=so.info["xmp"]
+                  out=f"candidates/re02-original-y{y}.jpg"
+                  crop.save(out,**kw)
+                  print(out,Path(out).stat().st_size,H(out))
           PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: loading-image-candidates
+          path: candidates/
+          if-no-files-found: error
+          retention-days: 1
