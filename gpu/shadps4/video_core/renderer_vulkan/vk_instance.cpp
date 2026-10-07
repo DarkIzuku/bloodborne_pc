@@ -671,8 +671,15 @@ void Instance::CreateAllocator() {
         .vkGetDeviceProcAddr = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr,
     };
 
+    // Upstream 0.3: smaller VMA blocks return fragmented VRAM to the driver sooner.
+    // BB_VMA_BLOCK_MB=N overrides the 64 MiB default.
+    static const VkDeviceSize block_size = [] {
+        const char* env = std::getenv("BB_VMA_BLOCK_MB");
+        return VkDeviceSize(env ? std::max(1ul, std::strtoul(env, nullptr, 10)) : 64ul) << 20;
+    }();
     const VmaAllocatorCreateInfo allocator_info = {
         .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .preferredLargeHeapBlockSize = block_size,
         .physicalDevice = physical_device,
         .device = *device,
         .pVulkanFunctions = &functions,
