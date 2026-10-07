@@ -7,6 +7,7 @@ on:
     branches:
       - seamless-dev
       - offline-performance-precache-buildcheck
+      - custom-loading-screens-v1
     paths:
       - "src/**"
       - "gpu/**"
@@ -84,6 +85,13 @@ jobs:
           out/gpu/motion-shader-test.exe
           out/gpu/image-overlap-test.exe
 
+      - name: Validate custom loading screen builder
+        shell: msys2 {0}
+        run: |
+          set -e
+          python -m py_compile scripts/build_loading_gfx.py
+          test "$(find assets/loading_screens -maxdepth 1 -type f -name 'loading_*.jpg' | wc -l)" -eq 6
+
       - name: Fetch DLSS 310.9.1
         shell: msys2 {0}
         run: bash tools/fetch_dlss.sh out
@@ -128,13 +136,14 @@ jobs:
         shell: msys2 {0}
         run: |
           set -e
-          mkdir -p package/out package/scripts package/patches package/mods package/launcher-assets
+          mkdir -p package/out package/scripts package/patches package/mods package/launcher-assets package/assets/loading_screens
           cp -f launcher-publish/BloodborneLauncher.exe package/
           cp -f run.bat build.sh setup.bat package/
           cp -f out/bb-probe.exe out/bb-gpu-capabilities.exe package/out/
           cp -f launcher-windows/BloodborneLauncher/Assets/bloodborne.ico package/out/
           test ! -f out/nvngx_dlss.dll || cp -f out/nvngx_dlss.dll package/out/
           cp -rf scripts/* package/scripts/
+          cp -f assets/loading_screens/loading_*.jpg package/assets/loading_screens/
           test ! -d patches || cp -rf patches/* package/patches/
           test ! -d fsr4_shaders || cp -rf fsr4_shaders package/
           test ! -f LICENSE || cp -f LICENSE package/
