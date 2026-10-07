@@ -108,6 +108,15 @@ static int translate(const char *guest,char *out,size_t size) {
         const size_t blen=strlen(buffer), slen=strlen(suffix);
         if (blen>=slen && !strcmp(buffer+blen-slen,suffix)) {
             static int announced=0;
+            const char *custom=getenv("BB_CUSTOM_LOADING_GFX");
+            if (custom && *custom && !access(custom,R_OK)) {
+                if ((size_t)snprintf(out,size,"%s",custom)>=size) return ENAMETOOLONG;
+                if (!announced) {
+                    puts("Runtime: custom classic loading screen enabled (6 embedded random backgrounds)");
+                    announced=1;
+                }
+                return 0;
+            }
             buffer[blen-slen]='\0';
             strncat(buffer,"/dvdroot_ps4/menu/nowloading.gfx",
                     sizeof(buffer)-strlen(buffer)-1);
