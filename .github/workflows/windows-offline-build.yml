@@ -142,6 +142,22 @@ jobs:
           $actual = (Get-FileHash package/tools/directxtex/texconv.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actual -ne $expected) { throw "texconv SHA256 mismatch: $actual" }
 
+      - name: Download pinned WitchyBND PS4 TPF tool
+        shell: pwsh
+        run: |
+          $url = "https://github.com/ividyon/WitchyBND/releases/download/3.0.1.0/WitchyBND-3.0.1.0-win-x64.zip"
+          $expected = "a3e6b2a0f7eac13f5e83b6602a1149322439c0662baa140ecdd84be28af50364"
+          Invoke-WebRequest -Uri $url -OutFile witchybnd.zip
+          $actual = (Get-FileHash witchybnd.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "WitchyBND SHA256 mismatch: $actual" }
+          Remove-Item -Recurse -Force witchybnd-extract -ErrorAction SilentlyContinue
+          Expand-Archive witchybnd.zip -DestinationPath witchybnd-extract -Force
+          $exe = Get-ChildItem witchybnd-extract -Recurse -Filter WitchyBND.exe | Select-Object -First 1
+          if (-not $exe) { throw "WitchyBND.exe not found in pinned release" }
+          New-Item -ItemType Directory -Force -Path package/tools/witchybnd | Out-Null
+          Copy-Item -Path (Join-Path $exe.Directory.FullName "*") -Destination package/tools/witchybnd -Recurse -Force
+          if (-not (Test-Path package/tools/witchybnd/WitchyBND.exe)) { throw "WitchyBND packaging failed" }
+
       - name: Assemble portable test package
         shell: msys2 {0}
         run: |

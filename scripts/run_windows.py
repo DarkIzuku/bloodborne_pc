@@ -121,6 +121,7 @@ def main():
     classic_tpf = original / 'dvdroot_ps4' / 'menu' / 'nowloading.tpf.dcx'
     loading_assets = ROOT / 'assets' / 'loading_screens'
     texconv = ROOT / 'tools' / 'directxtex' / 'texconv.exe'
+    witchy = ROOT / 'tools' / 'witchybnd' / 'WitchyBND.exe'
     custom_dir = out / 'ui' / 'loading_screens'
     gfx_builder = SCRIPTS / 'build_loading_gfx.py'
     tpf_builder = SCRIPTS / 'build_loading_tpf.py'
@@ -128,12 +129,13 @@ def main():
                   for index in range(1, 7)]
     custom_tpf = custom_dir / 'nowloading-custom.tpf.dcx'
     if (classic_gfx.is_file() and classic_tpf.is_file() and loading_assets.is_dir()
-            and gfx_builder.is_file() and tpf_builder.is_file() and texconv.is_file()):
+            and gfx_builder.is_file() and tpf_builder.is_file()
+            and texconv.is_file() and witchy.is_file()):
         gfx_status = run([PYTHON, gfx_builder, classic_gfx,
                           '--images-dir', loading_assets, '--out-dir', custom_dir], check=False)
         tpf_status = run([PYTHON, tpf_builder, classic_tpf,
                           '--images-dir', loading_assets, '--texconv', texconv,
-                          '--output', custom_tpf], check=False)
+                          '--witchy', witchy, '--output', custom_tpf], check=False)
         if (gfx_status == 0 and tpf_status == 0 and
                 all(path.is_file() for path in custom_gfx) and custom_tpf.is_file()):
             os.environ['BB_CUSTOM_LOADING_GFX_DIR'] = str(custom_dir.resolve())
@@ -141,7 +143,7 @@ def main():
         else:
             print('Loading screens: custom GFX/TPF resources unavailable; using the original classic screen')
     else:
-        print('Loading screens: classic GFX/TPF, packaged artwork or texconv missing; '
+        print('Loading screens: classic GFX/TPF, packaged artwork, texconv or WitchyBND missing; '
               'using the original classic screen')
 
     # The in-game menu's "Apply and restart" runs this launcher again (probe.c runtime_restart).
