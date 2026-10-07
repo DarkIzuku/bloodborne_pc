@@ -116,6 +116,7 @@ def main():
     os.environ.pop('BB_CUSTOM_LOADING_GFX_DIR', None)
     classic_gfx = original / 'dvdroot_ps4' / 'menu' / 'nowloading.gfx'
     loading_assets = ROOT / 'assets' / 'loading_screens'
+    os.environ['BB_LOADING_ASSETS_DIR'] = str(loading_assets.resolve())
     custom_gfx_dir = out / 'ui' / 'loading_screens'
     loading_builder = SCRIPTS / 'build_loading_gfx.py'
     custom_variants = [custom_gfx_dir / f'nowloading-custom-{index:02d}.gfx'

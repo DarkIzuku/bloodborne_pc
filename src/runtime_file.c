@@ -112,6 +112,23 @@ static int translate(const char *guest,char *out,size_t size) {
     if (guest[0]!='/') snprintf(buffer,sizeof(buffer),"/app0/%s",guest);
     else snprintf(buffer,sizeof(buffer),"%s",guest);
 
+    /* The generated classic GFX redirects its existing external background image to one of these
+     * six names. Serve the packaged JPEG directly from the port without adding anything to the
+     * user's dump. Scaleform resolves relative external images through the same guest file API. */
+    const char *base=strrchr(buffer,'/');
+    base=base ? base+1 : buffer;
+    if (!strncmp(base,"bb_loading_",11) && strlen(base)==16 &&
+        base[11]>='0' && base[11]<='9' && base[12]>='0' && base[12]<='9' &&
+        !strcmp(base+13,".jpg")) {
+        unsigned index=(unsigned)(base[11]-'0')*10u+(unsigned)(base[12]-'0');
+        const char *assets=getenv("BB_LOADING_ASSETS_DIR");
+        if (assets && index>=1 && index<=6) {
+            int n=snprintf(out,size,"%s/loading_%02u.jpg",assets,index);
+            if (n<0 || (size_t)n>=size) return ENAMETOOLONG;
+            return access(out,R_OK) ? ENOENT : 0;
+        }
+    }
+
     // Bloodborne 1.09 uses nowloading2.gfx for the item-card loading screen. The original
     // 1.00/1.03 presentation is still shipped as nowloading.gfx. Redirecting the guest path
     // gives us the classic screen without modifying, copying or replacing the user's game files.

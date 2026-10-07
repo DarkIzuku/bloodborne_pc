@@ -2,8 +2,9 @@
 """Build Bloodborne PC's custom classic loading GFX from the user's own nowloading.gfx.
 
 The original game file is read-only. Six generated copies under out/ preserve the original classic
-timeline, display list, fades and ActionScript byte-for-byte. Each copy replaces only the JPEG bytes
-of the existing fullscreen background bitmap; host-side code selects one variant per loading screen.
+timeline, display list, fades and ActionScript. GFxExport stores this movie's images externally, so
+each copy redirects the existing background image character to one packaged JPEG; host-side code
+selects one variant per loading screen.
 """
 import argparse
 import hashlib
@@ -382,13 +383,72 @@ def patch_main_sprite(payload, new_background):
     return bytes(output)
 
 
-def build_variants(source, images, outputs):
-    """Generate six variants by replacing the classic movie's existing background JPEG only.
+def read_net_string(payload, pos):
+    if pos >= len(payload):
+        raise ValueError('truncated GFX net string')
+    length = payload[pos]
+    pos += 1
+    if pos + length > len(payload):
+        raise ValueError('truncated GFX net string data')
+    return payload[pos:pos + length].decode('utf-8', errors='replace'), pos + length
 
-    Do not add characters, shapes, sprites or bytecode. Bloodborne/Scaleform already accepts the
-    original classic movie, so keeping every tag and character relationship intact is much safer
-    than synthesizing new SWF display objects. Only the bytes of one existing DefineBitsJPEG2 tag
-    are changed, plus the enclosing tag/file lengths.
+
+def write_net_string(value):
+    encoded = value.encode('utf-8')
+    if len(encoded) > 255:
+        raise ValueError('GFX net string is too long')
+    return bytes((len(encoded),)) + encoded
+
+
+def parse_external_image(code, payload):
+    """Return the Scaleform external-image fields we need for tags 1001/1009."""
+    try:
+        if code == 1009:  # DefineExternalImage2
+            if len(payload) < 10:
+                return None
+            image_id, id_type, bitmap_format, width, height = struct.unpack_from('<HHHHH', payload, 0)
+            export_name, pos = read_net_string(payload, 10)
+            file_name, pos = read_net_string(payload, pos)
+            return {
+                'code': code, 'key': image_id, 'id_type': id_type, 'bitmap_format': bitmap_format,
+                'width': width, 'height': height, 'export_name': export_name,
+                'file_name': file_name, 'extra': payload[pos:],
+            }
+        if code == 1001:  # DefineExternalImage
+            if len(payload) < 8:
+                return None
+            character, bitmap_format, width, height = struct.unpack_from('<HHHH', payload, 0)
+            export_name, pos = read_net_string(payload, 8)
+            file_name = ''
+            if pos < len(payload):
+                file_name, pos = read_net_string(payload, pos)
+            return {
+                'code': code, 'key': character, 'bitmap_format': bitmap_format,
+                'width': width, 'height': height, 'export_name': export_name,
+                'file_name': file_name, 'extra': payload[pos:],
+            }
+    except (struct.error, ValueError):
+        return None
+    return None
+
+
+def rewrite_external_image(payload, info, file_name):
+    """Keep the same image id/dimensions and only redirect its source to our packaged JPEG."""
+    if info['code'] == 1009:
+        prefix = struct.pack('<HHHHH', info['key'], info['id_type'], 10, info['width'], info['height'])
+    else:
+        prefix = struct.pack('<HHHH', info['key'], 10, info['width'], info['height'])
+    return (prefix + write_net_string(info['export_name']) + write_net_string(file_name) +
+            info['extra'])
+
+
+def build_variants(source, images, outputs):
+    """Generate six structurally-original GFX variants using Scaleform's external-image tag.
+
+    Bloodborne's exported GFX does not embed its background as DefineBitsJPEG2; GFxExport strips
+    images into external resources. Keep the original movie/tag graph and image character id, but
+    make the existing external-image definition load one packaged JPEG directly. No new sprite,
+    shape, character or ActionScript is added.
     """
     original = source.read_bytes()
     if original[:3] != b'GFX':
@@ -404,55 +464,77 @@ def build_variants(source, images, outputs):
     start = header_end(original)
     pos = start
     top = []
-    jpeg_candidates = []
+    external = {}
+    subimages = []
     while pos < len(original):
         code, payload, _, end = parse_tag(original, pos)
         pos = end
-        if code == 21 and len(payload) > 4:  # DefineBitsJPEG2: UI16 CharacterID + JPEG bytes
-            try:
-                dims = jpeg_dimensions(payload[2:])
-            except ValueError:
-                dims = None
-            if dims:
-                jpeg_candidates.append(
-                    (struct.unpack_from('<H', payload, 0)[0], dims, len(payload) - 2)
-                )
+        info = parse_external_image(code, payload)
+        if info:
+            external[info['key']] = info
+        elif code == 1008 and len(payload) >= 12:  # DefineSubImage
+            character, image_id, x1, y1, x2, y2 = struct.unpack_from('<HHHHHH', payload, 0)
+            if x2 > x1 and y2 > y1:
+                subimages.append((character, image_id, x1, y1, x2, y2))
         top.append((code, payload))
         if code == 0:
             break
 
-    # The classic fullscreen background is expected to be the sole 1920x1080 JPEG. Prefer that
-    # exact invariant. If a regional build contains several, use the largest JPEG among those;
-    # this changes only image bytes and cannot corrupt the movie's display-list structure.
-    full_hd = [item for item in jpeg_candidates if item[1] == (1920, 1080)]
-    if not full_hd:
-        summary = ', '.join(f'id={cid}:{dims[0]}x{dims[1]}' for cid, dims, _ in jpeg_candidates[:12])
-        raise ValueError(f'classic 1920x1080 background JPEG was not found ({summary or "no JPEG2 tags"})')
-    background_id, background_dims, original_jpeg_size = max(full_hd, key=lambda item: item[2])
+    if not external:
+        raise ValueError('no Scaleform external-image tags (1001/1009) were found')
+
+    # Prefer the source image behind the largest 16:9-ish subimage: exported UI commonly packs
+    # the actual loading background into an atlas and exposes it through DefineSubImage.
+    ranked = []
+    for character, image_id, x1, y1, x2, y2 in subimages:
+        if image_id not in external:
+            continue
+        width, height = x2 - x1, y2 - y1
+        aspect_error = abs(width * 9 - height * 16)
+        near_16_9 = aspect_error <= max(width * 9, height * 16) // 20  # within ~5%
+        ranked.append((1 if near_16_9 else 0, width * height, -aspect_error,
+                       image_id, f'subimage {character} {width}x{height}'))
+    if ranked:
+        _, _, _, background_key, reason = max(ranked)
+    else:
+        # Direct external-image fallback: choose the largest resource, preferring 16:9.
+        direct = []
+        for key, info in external.items():
+            width, height = info['width'], info['height']
+            if not width or not height:
+                continue
+            aspect_error = abs(width * 9 - height * 16)
+            near_16_9 = aspect_error <= max(width * 9, height * 16) // 20
+            direct.append((1 if near_16_9 else 0, width * height, -aspect_error, key,
+                           f'external {width}x{height}'))
+        if not direct:
+            raise ValueError('external-image tags had no usable dimensions')
+        _, _, _, background_key, reason = max(direct)
+
+    chosen = external[background_key]
+    print('Loading screens: external background candidate '
+          f'id={background_key}, {chosen["width"]}x{chosen["height"]}, '
+          f'format={chosen["bitmap_format"]}, file={chosen["file_name"]!r}, via {reason}')
 
     built = []
-    for image_index, (jpeg, output) in enumerate(zip(image_data, outputs), start=1):
+    for image_index, output in enumerate(outputs, start=1):
+        custom_name = f'bb_loading_{image_index:02d}.jpg'
         rebuilt = bytearray(original[:start])
         replaced = False
         for code, payload in top:
-            if code == 21 and len(payload) >= 2:
-                character = struct.unpack_from('<H', payload, 0)[0]
-                if character == background_id:
-                    payload = struct.pack('<H', character) + jpeg
-                    replaced = True
+            info = parse_external_image(code, payload)
+            if info and info['key'] == background_key:
+                payload = rewrite_external_image(payload, info, custom_name)
+                replaced = True
             rebuilt.extend(tag(code, payload))
 
         if not replaced:
-            raise ValueError(f'background character {background_id} disappeared while rebuilding variant {image_index}')
+            raise ValueError(f'external background id {background_key} disappeared in variant {image_index}')
         rebuilt[:3] = b'GFX'
         struct.pack_into('<I', rebuilt, 4, len(rebuilt))
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(rebuilt)
         built.append(len(rebuilt))
-
-    print(f'Loading screens: replacing existing classic JPEG character {background_id} '
-          f'({background_dims[0]}x{background_dims[1]}, {original_jpeg_size} bytes); '
-          'movie structure/ActionScript unchanged')
     return built
 
 def fingerprint(paths):
