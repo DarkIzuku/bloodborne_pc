@@ -112,52 +112,52 @@ static int translate(const char *guest,char *out,size_t size) {
     if (guest[0]!='/') snprintf(buffer,sizeof(buffer),"/app0/%s",guest);
     else snprintf(buffer,sizeof(buffer),"%s",guest);
 
-    // Bloodborne 1.09 uses nowloading2.gfx for the item-card loading screen. The original
-    // 1.00/1.03 presentation is still shipped as nowloading.gfx. Redirecting the guest path
-    // gives us the classic screen without modifying, copying or replacing the user's game files.
-    // Set BB_CLASSIC_LOADING=0 only for debugging if the 1.09 screen is ever needed again.
+    // Bloodborne 1.09 requests nowloading2.gfx. Serve the original classic movie unchanged.
+    // Custom artwork lives only in a port-owned copy of nowloading.tpf.dcx, selected per load.
     static int classic_loading = -1;
     if (classic_loading < 0) {
         const char *e=getenv("BB_CLASSIC_LOADING");
         classic_loading = !(e && e[0]=='0');
     }
     if (classic_loading) {
-        const char *suffix="/dvdroot_ps4/menu/nowloading2.gfx";
-        const size_t blen=strlen(buffer), slen=strlen(suffix);
-        if (blen>=slen && !strcmp(buffer+blen-slen,suffix)) {
-            static int announced=0;
-            const char *custom_dir=getenv("BB_CUSTOM_LOADING_GFX_DIR");
+        const char *gfx_suffix="/dvdroot_ps4/menu/nowloading2.gfx";
+        const size_t blen=strlen(buffer), glen=strlen(gfx_suffix);
+        if (blen>=glen && !strcmp(buffer+blen-glen,gfx_suffix)) {
+            const char *custom_dir=getenv("BB_CUSTOM_LOADING_TPF_DIR");
             if (custom_dir && *custom_dir) {
                 host_lock(&lock);
                 if (custom_loading_selection < 0) {
                     custom_loading_selection=(int)loading_random_index();
-                    printf("Runtime: custom classic loading screen selected %d/6\n",
+                    printf("Runtime: custom classic loading texture selected %d/6\n",
                            custom_loading_selection+1);
                 }
-                unsigned first=(unsigned)custom_loading_selection;
                 host_unlock(&lock);
-                for (unsigned attempt=0;attempt<6;++attempt) {
-                    unsigned index=(first+attempt)%6u;
-                    char candidate[PATH_MAX];
-                    int n=snprintf(candidate,sizeof(candidate),"%s/nowloading-custom-%02u.gfx",
-                                   custom_dir,index+1u);
-                    if (n>0 && (size_t)n<sizeof(candidate) && !access(candidate,R_OK)) {
-                        if ((size_t)snprintf(out,size,"%s",candidate)>=size) return ENAMETOOLONG;
-                        if (index != first) {
-                            host_lock(&lock);
-                            custom_loading_selection=(int)index;
-                            host_unlock(&lock);
-                        }
-                        return 0;
-                    }
-                }
             }
-            buffer[blen-slen]='\0';
+            buffer[blen-glen]='\0';
             strncat(buffer,"/dvdroot_ps4/menu/nowloading.gfx",
                     sizeof(buffer)-strlen(buffer)-1);
-            if (!announced) {
-                puts("Runtime: classic loading screen enabled (nowloading2.gfx -> nowloading.gfx)");
-                announced=1;
+        }
+
+        const char *tpf_suffix="/dvdroot_ps4/menu/nowloading.tpf.dcx";
+        const size_t tlen=strlen(buffer), tslen=strlen(tpf_suffix);
+        if (tlen>=tslen && !strcmp(buffer+tlen-tslen,tpf_suffix)) {
+            const char *custom_dir=getenv("BB_CUSTOM_LOADING_TPF_DIR");
+            if (custom_dir && *custom_dir) {
+                host_lock(&lock);
+                if (custom_loading_selection < 0) {
+                    custom_loading_selection=(int)loading_random_index();
+                    printf("Runtime: custom classic loading texture preselected %d/6\n",
+                           custom_loading_selection+1);
+                }
+                unsigned index=(unsigned)custom_loading_selection;
+                host_unlock(&lock);
+                char candidate[PATH_MAX];
+                int n=snprintf(candidate,sizeof(candidate),"%s/nowloading-custom-%02u.tpf.dcx",
+                               custom_dir,index+1u);
+                if (n>0 && (size_t)n<sizeof(candidate) && !access(candidate,R_OK)) {
+                    if ((size_t)snprintf(out,size,"%s",candidate)>=size) return ENAMETOOLONG;
+                    return 0;
+                }
             }
         }
     }
@@ -292,8 +292,11 @@ static int64_t do_open(const char *guest,int flags,int mode) {
     int fd=-1;
     for (int i=3;i<MAX_FILES;++i) if (!files[i].used) { fd=i; break; }
     if (fd<0) { host_unlock(&lock); if (host>=0) close(host); free_listing(dir); return -EMFILE; }
-    files[fd]=(File){.used=1,.host=host,.dir=dir,
-                     .custom_loading=strstr(path,"nowloading-custom-")!=NULL};
+    const char *loading_suffix="/dvdroot_ps4/menu/nowloading2.gfx";
+    size_t guest_len=strlen(guest), loading_len=strlen(loading_suffix);
+    int is_loading_movie=guest_len>=loading_len &&
+                         !strcmp(guest+guest_len-loading_len,loading_suffix);
+    files[fd]=(File){.used=1,.host=host,.dir=dir,.custom_loading=is_loading_movie};
     snprintf(files[fd].path,sizeof(files[fd].path),"%s",guest);
     if (files[fd].custom_loading) ++custom_loading_open_count;
     ++opens;
@@ -323,8 +326,8 @@ static int64_t do_close(int fd) {
     *f=(File){0};
     if (was_custom_loading) {
         if (custom_loading_open_count) --custom_loading_open_count;
-        /* Re-arm after Scaleform closes the selected self-contained movie. The next classic
-         * loading screen can choose another embedded background. */
+        /* Re-arm after the original classic movie closes. If Bloodborne reopens the TPF for the
+         * next movie, that load receives a newly selected validated texture package. */
         if (!custom_loading_open_count) custom_loading_selection=-1;
     }
     host_unlock(&lock);
