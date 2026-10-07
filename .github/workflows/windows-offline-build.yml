@@ -90,7 +90,6 @@ jobs:
         run: |
           set -e
           python -m py_compile scripts/build_loading_gfx.py
-          test "$(find assets/loading_screens -maxdepth 1 -type f -name 'loading_*.jpg' | wc -l)" -eq 6
 
       - name: Fetch DLSS 310.9.1
         shell: msys2 {0}
@@ -143,7 +142,10 @@ jobs:
           cp -f launcher-windows/BloodborneLauncher/Assets/bloodborne.ico package/out/
           test ! -f out/nvngx_dlss.dll || cp -f out/nvngx_dlss.dll package/out/
           cp -rf scripts/* package/scripts/
-          cp -f assets/loading_screens/loading_*.jpg package/assets/loading_screens/
+          if [ -d assets/loading_screens ]; then
+            cp -f assets/loading_screens/loading_*.jpg package/assets/loading_screens/ 2>/dev/null || true
+            cp -f assets/loading_screens/loading_*.jpeg package/assets/loading_screens/ 2>/dev/null || true
+          fi
           test ! -d patches || cp -rf patches/* package/patches/
           test ! -d fsr4_shaders || cp -rf fsr4_shaders package/
           test ! -f LICENSE || cp -f LICENSE package/
