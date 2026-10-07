@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #ifdef _WIN32
@@ -50,6 +51,21 @@ static Mount mounts[MAX_MOUNTS];
 static size_t mount_count, opens, reads, writes, missing;
 static uint64_t bytes_read;
 static HostMutex lock=HOST_MUTEX_INIT;
+
+/* Host-side selector for the six loading movies. Keep randomness outside Scaleform: the former
+ * generated AVM2 selector was the only new executable content in the crashing GFX. */
+static unsigned loading_random_index(void) {
+    static uint32_t counter;
+    uint32_t seed=__atomic_load_n(&counter,__ATOMIC_RELAXED);
+    if (!seed) {
+        uint32_t initial=(uint32_t)time(NULL) ^ (uint32_t)(uintptr_t)&counter ^ UINT32_C(0xA511E9B3);
+        if (!initial) initial=1;
+        __atomic_compare_exchange_n(&counter,&seed,initial,0,__ATOMIC_RELAXED,__ATOMIC_RELAXED);
+    }
+    uint32_t x=__atomic_add_fetch(&counter,UINT32_C(0x9E3779B9),__ATOMIC_RELAXED);
+    x^=x>>16; x*=UINT32_C(0x7FEB352D); x^=x>>15; x*=UINT32_C(0x846CA68B); x^=x>>16;
+    return x % 6u;
+}
 
 int runtime_file_mount(const char *guest,const char *host) {
     host_lock(&lock);
@@ -108,14 +124,20 @@ static int translate(const char *guest,char *out,size_t size) {
         const size_t blen=strlen(buffer), slen=strlen(suffix);
         if (blen>=slen && !strcmp(buffer+blen-slen,suffix)) {
             static int announced=0;
-            const char *custom=getenv("BB_CUSTOM_LOADING_GFX");
-            if (custom && *custom && !access(custom,R_OK)) {
-                if ((size_t)snprintf(out,size,"%s",custom)>=size) return ENAMETOOLONG;
-                if (!announced) {
-                    puts("Runtime: custom classic loading screen enabled (6 embedded random backgrounds)");
-                    announced=1;
+            const char *custom_dir=getenv("BB_CUSTOM_LOADING_GFX_DIR");
+            if (custom_dir && *custom_dir) {
+                unsigned first=loading_random_index();
+                for (unsigned attempt=0;attempt<6;++attempt) {
+                    unsigned index=(first+attempt)%6u;
+                    char candidate[PATH_MAX];
+                    int n=snprintf(candidate,sizeof(candidate),"%s/nowloading-custom-%02u.gfx",
+                                   custom_dir,index+1u);
+                    if (n>0 && (size_t)n<sizeof(candidate) && !access(candidate,R_OK)) {
+                        if ((size_t)snprintf(out,size,"%s",candidate)>=size) return ENAMETOOLONG;
+                        printf("Runtime: custom classic loading screen selected %u/6\n",index+1u);
+                        return 0;
+                    }
                 }
-                return 0;
             }
             buffer[blen-slen]='\0';
             strncat(buffer,"/dvdroot_ps4/menu/nowloading.gfx",

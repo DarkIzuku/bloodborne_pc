@@ -383,7 +383,13 @@ def patch_main_sprite(payload, new_background):
     return bytes(output)
 
 
-def build(source, images, output):
+def build_variants(source, images, outputs):
+    """Generate six conservative GFX variants without injecting AVM2.
+
+    Each variant keeps Bloodborne's original classic movie/timeline/bytecode intact and only
+    redirects the existing background placement to one new static bitmap sprite. Random selection
+    happens in the host file redirect, before Scaleform parses the movie.
+    """
     original = source.read_bytes()
     if original[:3] != b'GFX':
         raise ValueError('source nowloading.gfx is not an uncompressed Scaleform GFX')
@@ -394,12 +400,10 @@ def build(source, images, output):
     for path, data in zip(images, image_data):
         if jpeg_dimensions(data) != (1920, 1080):
             raise ValueError(f'{path.name}: expected 1920x1080 JPEG')
-    abc_record = random_selector_abc_tag()
 
     start = header_end(original)
     pos = start
     main_sprite = None
-    symbol_payload = None
     max_character = 0
     top = []
     while pos < len(original):
@@ -408,7 +412,6 @@ def build(source, images, output):
         if code in (2, 22, 32, 39, 83, 21, 35, 36, 87, 90) and len(payload) >= 2:
             max_character = max(max_character, struct.unpack_from('<H', payload, 0)[0])
         if code == 76:
-            symbol_payload = payload
             for character, name in symbol_classes(payload):
                 max_character = max(max_character, character)
                 if name == 'NowLoading_fla.NowLoading_1':
@@ -416,47 +419,42 @@ def build(source, images, output):
         top.append((code, payload))
         if code == 0:
             break
-    if main_sprite is None or symbol_payload is None:
+    if main_sprite is None:
         raise ValueError('classic NowLoading_fla.NowLoading_1 SymbolClass was not found')
 
-    next_id = max_character + 1
-    bitmap_ids = list(range(next_id, next_id + EXPECTED_COUNT))
-    next_id += EXPECTED_COUNT
-    shape_ids = list(range(next_id, next_id + EXPECTED_COUNT))
-    next_id += EXPECTED_COUNT
-    selector_id = next_id
+    built = []
+    for image_index, (jpeg, output) in enumerate(zip(image_data, outputs), start=1):
+        # Reusing only standard SWF/GFX display tags is intentionally conservative. The previous
+        # experiment injected a generated AVM2 class and crashed inside the guest as soon as
+        # Scaleform opened the movie.
+        bitmap_id = max_character + 1
+        shape_id = max_character + 2
+        sprite_id = max_character + 3
+        additions = (
+            define_jpeg(bitmap_id, jpeg) +
+            define_bitmap_shape(shape_id, bitmap_id) +
+            selector_sprite(sprite_id, [shape_id])
+        )
 
-    additions = []
-    for character, jpeg in zip(bitmap_ids, image_data):
-        additions.append(define_jpeg(character, jpeg))
-    for character, bitmap in zip(shape_ids, bitmap_ids):
-        additions.append(define_bitmap_shape(character, bitmap))
-    additions.append(selector_sprite(selector_id, shape_ids))
+        rebuilt = bytearray(original[:start])
+        inserted_assets = patched_main = False
+        for code, payload in top:
+            if code == 39 and len(payload) >= 2 and struct.unpack_from('<H', payload, 0)[0] == main_sprite:
+                if not inserted_assets:
+                    rebuilt.extend(additions)
+                    inserted_assets = True
+                payload = patch_main_sprite(payload, sprite_id)
+                patched_main = True
+            rebuilt.extend(tag(code, payload))
 
-    rebuilt = bytearray(original[:start])
-    inserted_assets = inserted_abc = patched_symbol = patched_main = False
-    for code, payload in top:
-        if code == 39 and len(payload) >= 2 and struct.unpack_from('<H', payload, 0)[0] == main_sprite:
-            if not inserted_assets:
-                rebuilt.extend(b''.join(additions))
-                inserted_assets = True
-            payload = patch_main_sprite(payload, selector_id)
-            patched_main = True
-        if code == 76:
-            if not inserted_abc:
-                rebuilt.extend(abc_record)
-                inserted_abc = True
-            payload = add_symbol_class(payload, selector_id, CLASS_NAME)
-            patched_symbol = True
-        rebuilt.extend(tag(code, payload))
-
-    if not all((inserted_assets, inserted_abc, patched_symbol, patched_main)):
-        raise ValueError('custom loading GFX patch did not complete all required stages')
-    rebuilt[:3] = b'GFX'
-    struct.pack_into('<I', rebuilt, 4, len(rebuilt))
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(rebuilt)
-    return bytes(rebuilt)
+        if not inserted_assets or not patched_main:
+            raise ValueError(f'custom loading GFX variant {image_index} did not patch the main sprite')
+        rebuilt[:3] = b'GFX'
+        struct.pack_into('<I', rebuilt, 4, len(rebuilt))
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(rebuilt)
+        built.append(len(rebuilt))
+    return built
 
 
 def fingerprint(paths):
@@ -471,7 +469,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path, help='the user-owned dvdroot_ps4/menu/nowloading.gfx')
     parser.add_argument('--images-dir', required=True, type=Path)
-    parser.add_argument('--out', required=True, type=Path)
+    parser.add_argument('--out-dir', required=True, type=Path)
     args = parser.parse_args()
 
     images = sorted([*args.images_dir.glob('loading_*.jpg'), *args.images_dir.glob('loading_*.jpeg')])
@@ -482,18 +480,22 @@ def main():
         if not path.is_file():
             raise SystemExit(f'Missing loading-screen input: {path}')
 
-    key = fingerprint(required)
-    stamp = args.out.with_suffix(args.out.suffix + '.sha256')
-    if args.out.is_file() and stamp.is_file() and stamp.read_text().strip() == key:
-        print(f'Loading screens: cached custom classic GFX ({args.out.name})')
+    outputs = [args.out_dir / f'nowloading-custom-{index:02d}.gfx'
+               for index in range(1, EXPECTED_COUNT + 1)]
+    # Include the builder itself so a code fix cannot accidentally reuse a stale generated movie.
+    key = fingerprint([Path(__file__), *required])
+    stamp = args.out_dir / 'loading-screens.sha256'
+    if all(path.is_file() for path in outputs) and stamp.is_file() and stamp.read_text().strip() == key:
+        print(f'Loading screens: cached {EXPECTED_COUNT} safe classic GFX variants')
         return
     try:
-        data = build(args.source, images, args.out)
+        sizes = build_variants(args.source, images, outputs)
     except (OSError, ValueError, struct.error) as error:
         raise SystemExit(f'Loading screens: generation failed: {error}')
+    args.out_dir.mkdir(parents=True, exist_ok=True)
     stamp.write_text(key + '\n')
-    print(f'Loading screens: generated custom classic GFX with {EXPECTED_COUNT} random backgrounds '
-          f'({len(data)} bytes, original game file unchanged)')
+    print(f'Loading screens: generated {EXPECTED_COUNT} safe classic GFX variants '
+          f'({min(sizes)}..{max(sizes)} bytes, original game file unchanged)')
 
 
 if __name__ == '__main__':

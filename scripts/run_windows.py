@@ -109,21 +109,24 @@ def main():
     remembered.write_text(str(original), encoding='utf-8')
     os.environ['BB_GAME_DIR'] = str(original)
 
-    # Build the port-owned classic loading movie from the user's own classic GFX. The game dump
-    # stays read-only: six packaged backgrounds are embedded into out/ui/nowloading-custom.gfx,
-    # and runtime_file.c serves that generated host file when Bloodborne requests nowloading2.gfx.
-    os.environ.pop('BB_CUSTOM_LOADING_GFX', None)
+    # Build six conservative variants from the user's own classic GFX. The game dump stays
+    # read-only. Each movie contains exactly one packaged background and keeps the original
+    # classic timeline/ActionScript untouched; runtime_file.c randomly selects a movie per load.
+    os.environ.pop('BB_CUSTOM_LOADING_GFX', None)  # legacy AVM2 experiment; never serve it
+    os.environ.pop('BB_CUSTOM_LOADING_GFX_DIR', None)
     classic_gfx = original / 'dvdroot_ps4' / 'menu' / 'nowloading.gfx'
     loading_assets = ROOT / 'assets' / 'loading_screens'
-    custom_gfx = out / 'ui' / 'nowloading-custom.gfx'
+    custom_gfx_dir = out / 'ui' / 'loading_screens'
     loading_builder = SCRIPTS / 'build_loading_gfx.py'
+    custom_variants = [custom_gfx_dir / f'nowloading-custom-{index:02d}.gfx'
+                       for index in range(1, 7)]
     if classic_gfx.is_file() and loading_assets.is_dir() and loading_builder.is_file():
         status = run([PYTHON, loading_builder, classic_gfx,
-                      '--images-dir', loading_assets, '--out', custom_gfx], check=False)
-        if status == 0 and custom_gfx.is_file():
-            os.environ['BB_CUSTOM_LOADING_GFX'] = str(custom_gfx.resolve())
+                      '--images-dir', loading_assets, '--out-dir', custom_gfx_dir], check=False)
+        if status == 0 and all(path.is_file() for path in custom_variants):
+            os.environ['BB_CUSTOM_LOADING_GFX_DIR'] = str(custom_gfx_dir.resolve())
         else:
-            print('Loading screens: custom GFX unavailable; using the original classic screen')
+            print('Loading screens: safe custom variants unavailable; using the original classic screen')
     else:
         print('Loading screens: packaged assets or classic GFX missing; using the original classic screen')
 
