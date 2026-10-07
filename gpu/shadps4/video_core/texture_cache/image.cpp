@@ -102,8 +102,21 @@ void UniqueImage::Destroy() {
 void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
     this->image_ci = image_ci;
     ASSERT(!image);
+    // Upstream 0.3: large textures get dedicated VMA allocations so evicted images do not
+    // leave mostly-empty shared blocks resident indefinitely. BB_VMA_DEDICATED_MB=0 disables it.
+    static const vk::DeviceSize dedicated_from = [] {
+        const char* env = std::getenv("BB_VMA_DEDICATED_MB");
+        return vk::DeviceSize(env ? std::strtoull(env, nullptr, 10) : 4) << 20;
+    }();
+    VmaAllocationCreateFlags dedicated = 0;
+    if (device && dedicated_from != 0) {
+        const vk::DeviceImageMemoryRequirements query{.pCreateInfo = &image_ci};
+        if (device.getImageMemoryRequirements(query).memoryRequirements.size >= dedicated_from) {
+            dedicated = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+        }
+    }
     const VmaAllocationCreateInfo alloc_ci = {
-        .flags = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT,
+        .flags = VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | dedicated,
         .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
         .requiredFlags = 0,
         .preferredFlags = 0,
