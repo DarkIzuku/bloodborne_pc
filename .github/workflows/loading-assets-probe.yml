@@ -1,4 +1,4 @@
-name: Loading assets source probe
+name: Loading assets reproduction probe
 
 on:
   push:
@@ -9,56 +9,59 @@ permissions:
   contents: read
 
 jobs:
-  probe:
+  repro:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe exact public sources
+      - name: Reproduce final JPEGs from known public sources
         shell: bash
         run: |
-          set -u
-          mkdir -p /tmp/probe
-          probe_url() {
-            local label="$1" expected="$2" url="$3"
-            local out="/tmp/probe/candidate"
-            rm -f "$out"
-            if curl -A "Mozilla/5.0" -fL --retry 1 --connect-timeout 8 --max-time 35 -sS "$url" -o "$out"; then
-              local got size
-              got="$(sha256sum "$out" | awk '{print $1}')"
-              size="$(stat -c%s "$out")"
-              echo "PROBE label=$label size=$size sha256=$got url=$url"
-              if [ "$got" = "$expected" ]; then
-                echo "EXACT_MATCH label=$label url=$url"
-              fi
-            fi
-          }
+          set -euo pipefail
+          python -m pip install --quiet pillow==12.3.0
+          curl -A "Mozilla/5.0" -fL -sS             "https://images.wallpapersden.com/image/download/bloodborne-gaming-2023_bW5rZmmUmZqaraWkpJRmbmdlrWZlbWU.jpg"             -o /tmp/src02.jpg
+          curl -A "Mozilla/5.0" -fL -sS             "https://static.zerochan.net/Bloodborne.full.2318714.jpg"             -o /tmp/src01.jpg
+          curl -A "Mozilla/5.0" -fL -sS             "https://images2.alphacoders.com/916/thumb-1920-916448.jpg"             -o /tmp/src01thumb.jpg
 
-          for spec in \
-            "loading_03.jpg|47a129aa21ee6d88b95ff3811bb87e71465d2b25672899ca51028373ff16de8d|534|534912|jpg" \
-            "loading_04.jpg|7224c7088960fcd6771922c1a143c08140d811a444f68e2a5454d9f7370aed32|585|585462|jpg" \
-            "loading_05.jpg|5de428fdbc5eb6a646282ca330bfc946ff81c7e9587f7f60f0b7d189a4617a52|860|860171|jpg" \
-            "loading_06.jpg|164e0ae7c807314ab67754f7a84c68f0dde328fe0cc3186b326006216f6afe71|130|1305260|jpeg"
-          do
-            IFS='|' read -r label expected dir id ext <<<"$spec"
-            for host in $(seq 1 10); do
-              probe_url "$label" "$expected" "https://images${host}.alphacoders.com/${dir}/${id}.${ext}"
-              probe_url "$label" "$expected" "https://images${host}.alphacoders.com/${dir}/thumb-1920-${id}.${ext}"
-              if [ "$ext" = "jpeg" ]; then
-                probe_url "$label" "$expected" "https://images${host}.alphacoders.com/${dir}/${id}.jpg"
-                probe_url "$label" "$expected" "https://images${host}.alphacoders.com/${dir}/thumb-1920-${id}.jpg"
-              fi
-            done
-          done
+          python - <<'PY'
+          from PIL import Image
+          from pathlib import Path
+          import hashlib
 
-          probe_url "loading_02.jpg" "6305642ddfe111954ad57aa4399a8188d2350401a1b7e1a7f534c73ac48686fb" \
-            "https://images.wallpapersden.com/image/download/bloodborne-gaming-2023_bW5rZmmUmZqaraWkpJRmbmdlrWZlbWU.jpg"
-          probe_url "loading_02.jpg" "6305642ddfe111954ad57aa4399a8188d2350401a1b7e1a7f534c73ac48686fb" \
-            "https://images.wallpapersden.com/image/download/bloodborne-gaming-2023_bW5rZmmUmZqaraWkpJRmbmdlrWZrZWU.jpg"
+          E1="dc2da2d1b5b8f0c8410084420770990a62fc350d5c6ade8a69e4b90ebfda0732"
+          E2="6305642ddfe111954ad57aa4399a8188d2350401a1b7e1a7f534c73ac48686fb"
 
-          probe_url "loading_01.jpg" "dc2da2d1b5b8f0c8410084420770990a62fc350d5c6ade8a69e4b90ebfda0732" \
-            "https://static.zerochan.net/Bloodborne.full.2318714.jpg"
-          for host in $(seq 1 10); do
-            probe_url "loading_01.jpg" "dc2da2d1b5b8f0c8410084420770990a62fc350d5c6ade8a69e4b90ebfda0732" \
-              "https://images${host}.alphacoders.com/916/916448.jpg"
-            probe_url "loading_01.jpg" "dc2da2d1b5b8f0c8410084420770990a62fc350d5c6ade8a69e4b90ebfda0732" \
-              "https://images${host}.alphacoders.com/916/thumb-1920-916448.jpg"
-          done
+          def sha(p):
+              return hashlib.sha256(Path(p).read_bytes()).hexdigest()
+
+          def save_variant(im, out, *, xmp=None, icc=None, optimize=True):
+              kw=dict(format="JPEG",quality=75,subsampling=0,optimize=optimize)
+              if xmp: kw["xmp"]=xmp
+              if icc: kw["icc_profile"]=icc
+              im.save(out, **kw)
+              return sha(out), Path(out).stat().st_size
+
+          s2=Image.open("/tmp/src02.jpg")
+          print("SRC02",s2.size,s2.info.keys(),len(s2.info.get("icc_profile",b"")),len(s2.info.get("xmp",b"") or b""))
+          for meta in ("both","icc","xmp","none"):
+              xmp=s2.info.get("xmp") if meta in ("both","xmp") else None
+              icc=s2.info.get("icc_profile") if meta in ("both","icc") else None
+              for opt in (True,False):
+                  out=f"/tmp/re02-{meta}-{opt}.jpg"
+                  got,size=save_variant(s2,out,xmp=xmp,icc=icc,optimize=opt)
+                  print("REPRO02",meta,opt,size,got,"MATCH" if got==E2 else "")
+
+          for srcname in ("src01.jpg","src01thumb.jpg"):
+              s1=Image.open("/tmp/"+srcname)
+              print("SRC01",srcname,s1.size,s1.info.keys(),len(s1.info.get("icc_profile",b"")),len(s1.info.get("xmp",b"") or b""))
+              if s1.width != 1920 or s1.height < 1080:
+                  continue
+              # Most likely operation for a 1920x1249 source is a centered 1920x1080 crop.
+              for y in (0, 84, 85, 169):
+                  if y+1080>s1.height: continue
+                  crop=s1.crop((0,y,1920,y+1080))
+                  for meta in ("both","xmp","none"):
+                      xmp=s1.info.get("xmp") if meta in ("both","xmp") else None
+                      icc=s1.info.get("icc_profile") if meta=="both" else None
+                      out=f"/tmp/re01-{srcname}-{y}-{meta}.jpg"
+                      got,size=save_variant(crop,out,xmp=xmp,icc=icc,optimize=True)
+                      print("REPRO01",srcname,"y",y,meta,size,got,"MATCH" if got==E1 else "")
+          PY
