@@ -168,7 +168,9 @@ public:
         // Every texture binding comes here; the mutex (shared with the fault handlers of the
         // guest threads) was ~3% of the GPU thread. Flags are read atomically: an invalidation
         // racing with this check races the same way with the locked path.
-        if (!BbToggle::Disabled(BbToggle::UpdateImageFastPath)) {
+        // A/B test: disable only the speculative lock-free UpdateImage fast path while
+        // investigating Bloodborne item-glyph flicker. Keep every other optimization unchanged.
+        if (false && !BbToggle::Disabled(BbToggle::UpdateImageFastPath)) {
             const Image& image = slot_images[image_id];
 #ifdef _LIBCPP_VERSION
             const u32 flags =
