@@ -58,36 +58,20 @@ jobs:
             mingw-w64-clang-x86_64-robin-map
             mingw-w64-clang-x86_64-ffmpeg
 
-      - name: Apply UI flicker B texture-tracking test
+      - name: Apply UI flicker C binding-memo test
         shell: msys2 {0}
         run: |
           python - <<'PY'
           from pathlib import Path
-          p = Path("gpu/shadps4/video_core/texture_cache/texture_cache.cpp")
+          p = Path("src/runtime_memory.c")
           s = p.read_text()
-          pairs = [
-              ("image.track_addr = image_begin;\n        image.track_addr_end = image_end;\n        tracker.UpdatePageWatchers<1>(image_begin, image.info.guest_size);",
-               "tracker.UpdatePageWatchers<1>(image_begin, image.info.guest_size);\n        image.track_addr = image_begin;\n        image.track_addr_end = image_end;"),
-              ("image.track_addr = image_begin;\n    tracker.UpdatePageWatchers<1>(image_begin, size);",
-               "tracker.UpdatePageWatchers<1>(image_begin, size);\n    image.track_addr = image_begin;"),
-              ("image.track_addr_end = image_end;\n    tracker.UpdatePageWatchers<1>(addr, size);",
-               "tracker.UpdatePageWatchers<1>(addr, size);\n    image.track_addr_end = image_end;"),
-              ("image.track_addr = 0;\n    image.track_addr_end = 0;\n    if (size != 0) {\n        tracker.UpdatePageWatchers<false>(addr, size);\n    }",
-               "if (size != 0) {\n        tracker.UpdatePageWatchers<false>(addr, size);\n    }\n    image.track_addr = 0;\n    image.track_addr_end = 0;"),
-              ("image.track_addr = addr;\n    if (image.track_addr == image.track_addr_end) {",
-               "tracker.UpdatePageWatchers<false>(image_begin, size);\n    image.track_addr = addr;\n    if (image.track_addr == image.track_addr_end) {"),
-              ("    tracker.UpdatePageWatchers<false>(image_begin, size);\n}",
-               "}"),
-              ("image.track_addr_end = addr;\n    if (image.track_addr == image.track_addr_end) {",
-               "tracker.UpdatePageWatchers<false>(addr, size);\n    image.track_addr_end = addr;\n    if (image.track_addr == image.track_addr_end) {"),
-              ("    tracker.UpdatePageWatchers<false>(addr, size);\n}\n\nvoid TextureCache::GarbageCollectImages()",
-               "}\n\nvoid TextureCache::GarbageCollectImages()"),
-          ]
-          for old, new in pairs:
-              if old not in s:
-                  raise SystemExit("UI flicker B patch anchor missing")
-              s = s.replace(old, new, 1)
-          p.write_text(s)
+          old = "uint64_t runtime_disabled_optimizations;"
+          # Disable only: TextureBindingMemo (1<<10), TextureViewMemo (1<<33),
+          # TextureSetMemo (1<<45). Keep every other optimization enabled.
+          new = "uint64_t runtime_disabled_optimizations = 35192962024448ULL;"
+          if old not in s:
+              raise SystemExit("UI flicker C patch anchor missing")
+          p.write_text(s.replace(old, new, 1))
           PY
 
       - name: Build bbport runtime
