@@ -15,6 +15,7 @@ on:
       - "scripts/**"
       - "tools/**"
       - "launcher-windows/**"
+      - "assets/**"
       - "build.sh"
       - "run.bat"
       - ".github/workflows/windows-offline-build.yml"
