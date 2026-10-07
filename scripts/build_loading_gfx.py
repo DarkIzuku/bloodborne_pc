@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Build Bloodborne PC's custom classic loading GFX from the user's own nowloading.gfx.
 
-The original game file is read-only. Six packaged JPEG backgrounds are embedded into a generated
-copy under out/, the original classic timeline/fades/loading indicator are preserved, and only its
-background sprite is replaced. The selector is a tiny AVM2 MovieClip generated here so the
-portable build has no external Flash compiler dependency.
+The original game file is read-only. Six generated copies under out/ preserve the original classic
+timeline, display list, fades and ActionScript byte-for-byte. Each copy replaces only the JPEG bytes
+of the existing fullscreen background bitmap; host-side code selects one variant per loading screen.
 """
 import argparse
 import hashlib
@@ -384,11 +383,12 @@ def patch_main_sprite(payload, new_background):
 
 
 def build_variants(source, images, outputs):
-    """Generate six conservative GFX variants without injecting AVM2.
+    """Generate six variants by replacing the classic movie's existing background JPEG only.
 
-    Each variant keeps Bloodborne's original classic movie/timeline/bytecode intact and only
-    redirects the existing background placement to one new static bitmap sprite. Random selection
-    happens in the host file redirect, before Scaleform parses the movie.
+    Do not add characters, shapes, sprites or bytecode. Bloodborne/Scaleform already accepts the
+    original classic movie, so keeping every tag and character relationship intact is much safer
+    than synthesizing new SWF display objects. Only the bytes of one existing DefineBitsJPEG2 tag
+    are changed, plus the enclosing tag/file lengths.
     """
     original = source.read_bytes()
     if original[:3] != b'GFX':
@@ -403,59 +403,57 @@ def build_variants(source, images, outputs):
 
     start = header_end(original)
     pos = start
-    main_sprite = None
-    max_character = 0
     top = []
+    jpeg_candidates = []
     while pos < len(original):
         code, payload, _, end = parse_tag(original, pos)
         pos = end
-        if code in (2, 22, 32, 39, 83, 21, 35, 36, 87, 90) and len(payload) >= 2:
-            max_character = max(max_character, struct.unpack_from('<H', payload, 0)[0])
-        if code == 76:
-            for character, name in symbol_classes(payload):
-                max_character = max(max_character, character)
-                if name == 'NowLoading_fla.NowLoading_1':
-                    main_sprite = character
+        if code == 21 and len(payload) > 4:  # DefineBitsJPEG2: UI16 CharacterID + JPEG bytes
+            try:
+                dims = jpeg_dimensions(payload[2:])
+            except ValueError:
+                dims = None
+            if dims:
+                jpeg_candidates.append(
+                    (struct.unpack_from('<H', payload, 0)[0], dims, len(payload) - 2)
+                )
         top.append((code, payload))
         if code == 0:
             break
-    if main_sprite is None:
-        raise ValueError('classic NowLoading_fla.NowLoading_1 SymbolClass was not found')
+
+    # The classic fullscreen background is expected to be the sole 1920x1080 JPEG. Prefer that
+    # exact invariant. If a regional build contains several, use the largest JPEG among those;
+    # this changes only image bytes and cannot corrupt the movie's display-list structure.
+    full_hd = [item for item in jpeg_candidates if item[1] == (1920, 1080)]
+    if not full_hd:
+        summary = ', '.join(f'id={cid}:{dims[0]}x{dims[1]}' for cid, dims, _ in jpeg_candidates[:12])
+        raise ValueError(f'classic 1920x1080 background JPEG was not found ({summary or "no JPEG2 tags"})')
+    background_id, background_dims, original_jpeg_size = max(full_hd, key=lambda item: item[2])
 
     built = []
     for image_index, (jpeg, output) in enumerate(zip(image_data, outputs), start=1):
-        # Reusing only standard SWF/GFX display tags is intentionally conservative. The previous
-        # experiment injected a generated AVM2 class and crashed inside the guest as soon as
-        # Scaleform opened the movie.
-        bitmap_id = max_character + 1
-        shape_id = max_character + 2
-        sprite_id = max_character + 3
-        additions = (
-            define_jpeg(bitmap_id, jpeg) +
-            define_bitmap_shape(shape_id, bitmap_id) +
-            selector_sprite(sprite_id, [shape_id])
-        )
-
         rebuilt = bytearray(original[:start])
-        inserted_assets = patched_main = False
+        replaced = False
         for code, payload in top:
-            if code == 39 and len(payload) >= 2 and struct.unpack_from('<H', payload, 0)[0] == main_sprite:
-                if not inserted_assets:
-                    rebuilt.extend(additions)
-                    inserted_assets = True
-                payload = patch_main_sprite(payload, sprite_id)
-                patched_main = True
+            if code == 21 and len(payload) >= 2:
+                character = struct.unpack_from('<H', payload, 0)[0]
+                if character == background_id:
+                    payload = struct.pack('<H', character) + jpeg
+                    replaced = True
             rebuilt.extend(tag(code, payload))
 
-        if not inserted_assets or not patched_main:
-            raise ValueError(f'custom loading GFX variant {image_index} did not patch the main sprite')
+        if not replaced:
+            raise ValueError(f'background character {background_id} disappeared while rebuilding variant {image_index}')
         rebuilt[:3] = b'GFX'
         struct.pack_into('<I', rebuilt, 4, len(rebuilt))
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(rebuilt)
         built.append(len(rebuilt))
-    return built
 
+    print(f'Loading screens: replacing existing classic JPEG character {background_id} '
+          f'({background_dims[0]}x{background_dims[1]}, {original_jpeg_size} bytes); '
+          'movie structure/ActionScript unchanged')
+    return built
 
 def fingerprint(paths):
     digest = hashlib.sha256()
