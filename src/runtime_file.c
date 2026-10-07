@@ -44,13 +44,15 @@ typedef struct {
 _Static_assert(sizeof(GuestStat)==120,"FreeBSD stat layout");
 
 typedef struct { char *names; size_t count, *offsets; unsigned char *types; } Listing;
-typedef struct { int used, host; Listing *dir; size_t position; char path[512]; } File;
+typedef struct { int used, host, custom_loading; Listing *dir; size_t position; char path[512]; } File;
 typedef struct { char guest[64]; char host[512]; } Mount;
 static File files[MAX_FILES];
 static Mount mounts[MAX_MOUNTS];
 static size_t mount_count, opens, reads, writes, missing;
 static uint64_t bytes_read;
 static HostMutex lock=HOST_MUTEX_INIT;
+static int custom_loading_selection=-1;
+static unsigned custom_loading_open_count;
 
 /* Host-side selector for the six loading movies. Keep randomness outside Scaleform: the former
  * generated AVM2 selector was the only new executable content in the crashing GFX. */
@@ -126,7 +128,17 @@ static int translate(const char *guest,char *out,size_t size) {
             static int announced=0;
             const char *custom_dir=getenv("BB_CUSTOM_LOADING_GFX_DIR");
             if (custom_dir && *custom_dir) {
-                unsigned first=loading_random_index();
+                /* translate() is used by stat/access/open. They must all resolve to the SAME
+                 * generated movie during one Scaleform load; choosing again here can make the
+                 * stat size belong to one variant while open/read serves another. */
+                host_lock(&lock);
+                if (custom_loading_selection < 0) {
+                    custom_loading_selection=(int)loading_random_index();
+                    printf("Runtime: custom classic loading screen selected %d/6\n",
+                           custom_loading_selection+1);
+                }
+                unsigned first=(unsigned)custom_loading_selection;
+                host_unlock(&lock);
                 for (unsigned attempt=0;attempt<6;++attempt) {
                     unsigned index=(first+attempt)%6u;
                     char candidate[PATH_MAX];
@@ -134,7 +146,11 @@ static int translate(const char *guest,char *out,size_t size) {
                                    custom_dir,index+1u);
                     if (n>0 && (size_t)n<sizeof(candidate) && !access(candidate,R_OK)) {
                         if ((size_t)snprintf(out,size,"%s",candidate)>=size) return ENAMETOOLONG;
-                        printf("Runtime: custom classic loading screen selected %u/6\n",index+1u);
+                        if (index != first) {
+                            host_lock(&lock);
+                            custom_loading_selection=(int)index;
+                            host_unlock(&lock);
+                        }
                         return 0;
                     }
                 }
@@ -278,8 +294,10 @@ static int64_t do_open(const char *guest,int flags,int mode) {
     int fd=-1;
     for (int i=3;i<MAX_FILES;++i) if (!files[i].used) { fd=i; break; }
     if (fd<0) { host_unlock(&lock); if (host>=0) close(host); free_listing(dir); return -EMFILE; }
-    files[fd]=(File){.used=1,.host=host,.dir=dir};
+    files[fd]=(File){.used=1,.host=host,.dir=dir,
+                     .custom_loading=strstr(path,"nowloading-custom-")!=NULL};
     snprintf(files[fd].path,sizeof(files[fd].path),"%s",guest);
+    if (files[fd].custom_loading) ++custom_loading_open_count;
     ++opens;
     host_unlock(&lock);
     if (audio_trace() && strstr(guest,"sound/")) printf("Audio trace: open(%s) -> fd %d, %lld bytes\n",guest,fd,(long long)s.st_size);
@@ -301,9 +319,17 @@ static int64_t do_close(int fd) {
     host_lock(&lock);
     File *f=get(fd);
     if (!f) { host_unlock(&lock); return -EBADF; }
+    int was_custom_loading=f->custom_loading;
     if (f->host>=0) close(f->host);
     free_listing(f->dir);
     *f=(File){0};
+    if (was_custom_loading) {
+        if (custom_loading_open_count) --custom_loading_open_count;
+        /* Re-arm only after Scaleform has finished with the selected movie. The next loading
+         * screen can then choose a new background, while stat/open/read within this one remain
+         * byte-for-byte consistent. */
+        if (!custom_loading_open_count) custom_loading_selection=-1;
+    }
     host_unlock(&lock);
     return 0;
 }
