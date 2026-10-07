@@ -1,4 +1,4 @@
-name: Finalize bundled custom loading screens
+name: Push exact bundled loading image assets
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
           ref: custom-loading-screens-v1
           path: target
 
-      - name: Assemble exact loading assets and push target
+      - name: Assemble and push exact loading images
         shell: bash
         run: |
           set -euo pipefail
@@ -37,14 +37,13 @@ jobs:
           fi
 
           mkdir -p target/assets/loading_screens
-
           base64 -d helper/.tmp-loading-transfer/loading_01.b64 > target/assets/loading_screens/loading_01.jpg
           base64 -d helper/.tmp-loading-transfer/loading_02.b64 > target/assets/loading_screens/loading_02.jpg
 
-          curl -A "Mozilla/5.0" -fL --retry 2 -sS             "https://images5.alphacoders.com/534/534912.jpg"             -o target/assets/loading_screens/loading_03.jpg
-          curl -A "Mozilla/5.0" -fL --retry 2 -sS             "https://images6.alphacoders.com/585/585462.jpg"             -o target/assets/loading_screens/loading_04.jpg
-          curl -A "Mozilla/5.0" -fL --retry 2 -sS             "https://images7.alphacoders.com/860/860171.jpg"             -o target/assets/loading_screens/loading_05.jpg
-          curl -A "Mozilla/5.0" -fL --retry 2 -sS             "https://images7.alphacoders.com/130/1305260.jpeg"             -o target/assets/loading_screens/loading_06.jpg
+          curl -A "Mozilla/5.0" -fL --retry 2 -sS "https://images5.alphacoders.com/534/534912.jpg" -o target/assets/loading_screens/loading_03.jpg
+          curl -A "Mozilla/5.0" -fL --retry 2 -sS "https://images6.alphacoders.com/585/585462.jpg" -o target/assets/loading_screens/loading_04.jpg
+          curl -A "Mozilla/5.0" -fL --retry 2 -sS "https://images7.alphacoders.com/860/860171.jpg" -o target/assets/loading_screens/loading_05.jpg
+          curl -A "Mozilla/5.0" -fL --retry 2 -sS "https://images7.alphacoders.com/130/1305260.jpeg" -o target/assets/loading_screens/loading_06.jpg
 
           (
             cd target
@@ -56,40 +55,13 @@ jobs:
             echo "164e0ae7c807314ab67754f7a84c68f0dde328fe0cc3186b326006216f6afe71  assets/loading_screens/loading_06.jpg"
           ) | (cd target && sha256sum -c -)
 
-          python - <<'PY'
-          from pathlib import Path
-          p = Path("target/.github/workflows/windows-offline-build.yml")
-          text = p.read_text(encoding="utf-8")
-          asset_line = '      - "assets/**"\n'
-          if asset_line not in text:
-              marker = '      - "launcher-windows/**"\n'
-              if marker not in text:
-                  raise SystemExit("push.paths insertion marker not found")
-              text = text.replace(marker, marker + asset_line, 1)
-              p.write_text(text, encoding="utf-8")
-          if 'cp -f assets/loading_screens/loading_*.jpg package/assets/loading_screens/' not in text:
-              raise SystemExit("portable package no longer copies loading_*.jpg")
-          PY
-
           cd target
-
           test "$(find assets/loading_screens -maxdepth 1 -type f -name 'loading_*.jpg' | wc -l)" -eq 6
-          grep -Fq -- '- "assets/**"' .github/workflows/windows-offline-build.yml
-          grep -Fq 'cp -f assets/loading_screens/loading_*.jpg package/assets/loading_screens/' .github/workflows/windows-offline-build.yml
 
-          git add             .github/workflows/windows-offline-build.yml             assets/loading_screens/loading_01.jpg             assets/loading_screens/loading_02.jpg             assets/loading_screens/loading_03.jpg             assets/loading_screens/loading_04.jpg             assets/loading_screens/loading_05.jpg             assets/loading_screens/loading_06.jpg
+          git add assets/loading_screens/loading_01.jpg                   assets/loading_screens/loading_02.jpg                   assets/loading_screens/loading_03.jpg                   assets/loading_screens/loading_04.jpg                   assets/loading_screens/loading_05.jpg                   assets/loading_screens/loading_06.jpg
 
-          expected_files="$(cat <<'EOF'
-          .github/workflows/windows-offline-build.yml
-          assets/loading_screens/loading_01.jpg
-          assets/loading_screens/loading_02.jpg
-          assets/loading_screens/loading_03.jpg
-          assets/loading_screens/loading_04.jpg
-          assets/loading_screens/loading_05.jpg
-          assets/loading_screens/loading_06.jpg
-          EOF
-          )"
           actual_files="$(git diff --cached --name-only)"
+          expected_files="$(printf '%s\n'             assets/loading_screens/loading_01.jpg             assets/loading_screens/loading_02.jpg             assets/loading_screens/loading_03.jpg             assets/loading_screens/loading_04.jpg             assets/loading_screens/loading_05.jpg             assets/loading_screens/loading_06.jpg)"
           if [ "$actual_files" != "$expected_files" ]; then
             echo "Unexpected staged file set:"
             printf '%s\n' "$actual_files"
