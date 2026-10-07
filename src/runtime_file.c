@@ -94,29 +94,6 @@ static int translate(const char *guest,char *out,size_t size) {
     if (guest[0]!='/') snprintf(buffer,sizeof(buffer),"/app0/%s",guest);
     else snprintf(buffer,sizeof(buffer),"%s",guest);
 
-    // Bloodborne 1.09 uses nowloading2.gfx for the item-card loading screen. The original
-    // 1.00/1.03 presentation is still shipped as nowloading.gfx. Redirecting the guest path
-    // gives us the classic screen without modifying, copying or replacing the user's game files.
-    // Set BB_CLASSIC_LOADING=0 only for debugging if the 1.09 screen is ever needed again.
-    static int classic_loading = -1;
-    if (classic_loading < 0) {
-        const char *e=getenv("BB_CLASSIC_LOADING");
-        classic_loading = !(e && e[0]=='0');
-    }
-    if (classic_loading) {
-        const char *suffix="/dvdroot_ps4/menu/nowloading2.gfx";
-        const size_t blen=strlen(buffer), slen=strlen(suffix);
-        if (blen>=slen && !strcmp(buffer+blen-slen,suffix)) {
-            static int announced=0;
-            buffer[blen-slen]='\0';
-            strncat(buffer,"/dvdroot_ps4/menu/nowloading.gfx",
-                    sizeof(buffer)-strlen(buffer)-1);
-            if (!announced) {
-                puts("Runtime: classic loading screen enabled (nowloading2.gfx -> nowloading.gfx)");
-                announced=1;
-            }
-        }
-    }
     for (const char *p=buffer;(p=strstr(p,".."));p+=2)
         if ((p==buffer || p[-1]=='/') && (p[2]==0 || p[2]=='/')) return EACCES;
     host_lock(&lock);
