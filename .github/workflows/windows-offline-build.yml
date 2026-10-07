@@ -58,6 +58,38 @@ jobs:
             mingw-w64-clang-x86_64-robin-map
             mingw-w64-clang-x86_64-ffmpeg
 
+      - name: Apply UI flicker B texture-tracking test
+        shell: msys2 {0}
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("gpu/shadps4/video_core/texture_cache/texture_cache.cpp")
+          s = p.read_text()
+          pairs = [
+              ("image.track_addr = image_begin;\n        image.track_addr_end = image_end;\n        tracker.UpdatePageWatchers<1>(image_begin, image.info.guest_size);",
+               "tracker.UpdatePageWatchers<1>(image_begin, image.info.guest_size);\n        image.track_addr = image_begin;\n        image.track_addr_end = image_end;"),
+              ("image.track_addr = image_begin;\n    tracker.UpdatePageWatchers<1>(image_begin, size);",
+               "tracker.UpdatePageWatchers<1>(image_begin, size);\n    image.track_addr = image_begin;"),
+              ("image.track_addr_end = image_end;\n    tracker.UpdatePageWatchers<1>(addr, size);",
+               "tracker.UpdatePageWatchers<1>(addr, size);\n    image.track_addr_end = image_end;"),
+              ("image.track_addr = 0;\n    image.track_addr_end = 0;\n    if (size != 0) {\n        tracker.UpdatePageWatchers<false>(addr, size);\n    }",
+               "if (size != 0) {\n        tracker.UpdatePageWatchers<false>(addr, size);\n    }\n    image.track_addr = 0;\n    image.track_addr_end = 0;"),
+              ("image.track_addr = addr;\n    if (image.track_addr == image.track_addr_end) {",
+               "tracker.UpdatePageWatchers<false>(image_begin, size);\n    image.track_addr = addr;\n    if (image.track_addr == image.track_addr_end) {"),
+              ("    tracker.UpdatePageWatchers<false>(image_begin, size);\n}",
+               "}"),
+              ("image.track_addr_end = addr;\n    if (image.track_addr == image.track_addr_end) {",
+               "tracker.UpdatePageWatchers<false>(addr, size);\n    image.track_addr_end = addr;\n    if (image.track_addr == image.track_addr_end) {"),
+              ("    tracker.UpdatePageWatchers<false>(addr, size);\n}\n\nvoid TextureCache::GarbageCollectImages()",
+               "}\n\nvoid TextureCache::GarbageCollectImages()"),
+          ]
+          for old, new in pairs:
+              if old not in s:
+                  raise SystemExit("UI flicker B patch anchor missing")
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+          PY
+
       - name: Build bbport runtime
         shell: msys2 {0}
         run: |
