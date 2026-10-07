@@ -236,13 +236,27 @@ bool PipelinedOpcode(PM4ItOpcode opcode) {
 } // namespace
 
 namespace {
+// Upstream 0.3: direct fence labels must not be written with overlapping memcpy stores.
+void StoreLabel(void* address, u64 value, u32 num_bytes) {
+    if (num_bytes == 8 && (reinterpret_cast<uintptr_t>(address) & 7) == 0) {
+        __atomic_store_n(static_cast<u64*>(address), value, __ATOMIC_RELEASE);
+    } else if (num_bytes == 4 && (reinterpret_cast<uintptr_t>(address) & 3) == 0) {
+        __atomic_store_n(static_cast<u32*>(address), u32(value), __ATOMIC_RELEASE);
+    } else {
+        auto* dst = static_cast<u8*>(address);
+        for (u32 i = 0; i < num_bytes; ++i) {
+            __atomic_store_n(dst + i, u8(value >> (8 * i)), __ATOMIC_RELEASE);
+        }
+    }
+}
+
 void SignalEop(const PM4CmdEventWriteEop& eop) {
     eop.SignalFence(
         [](void* address, u64 data, u32 num_bytes) {
             auto* memory = Core::Memory::Instance();
             BbWriteLog::Note(reinterpret_cast<u64>(address), &data, num_bytes, BbWriteLog::Fence);
             if (!memory->TryWriteBacking(address, &data, num_bytes)) {
-                memcpy(address, &data, num_bytes);
+                StoreLabel(address, data, num_bytes);
             }
         },
         [] { Platform::IrqC::Instance()->Signal(Platform::InterruptId::GfxEop); });
@@ -337,7 +351,7 @@ void RunEventWriteEos(Vulkan::Rasterizer& rasterizer, const u8* data) {
         auto* memory = Core::Memory::Instance();
         BbWriteLog::Note(reinterpret_cast<u64>(address), &value, num_bytes, BbWriteLog::Fence);
         if (!memory->TryWriteBacking(address, &value, num_bytes)) {
-            memcpy(address, &value, num_bytes);
+            StoreLabel(address, value, num_bytes);
         }
     });
     if (event_eos.command == PM4CmdEventWriteEos::Command::GdsStore) {
