@@ -1,4 +1,4 @@
-name: Loading assets candidate bridge
+name: Finalize bundled custom loading screens
 
 on:
   push:
@@ -6,58 +6,97 @@ on:
       - loading-assets-probe-20261007-a
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  candidates:
+  finalize:
     runs-on: ubuntu-latest
     steps:
-      - name: Build close deterministic candidates
+      - name: Checkout transfer helper
+        uses: actions/checkout@v4
+        with:
+          ref: loading-assets-probe-20261007-a
+          path: helper
+
+      - name: Checkout target branch
+        uses: actions/checkout@v4
+        with:
+          ref: custom-loading-screens-v1
+          path: target
+
+      - name: Assemble exact loading assets and push target
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --quiet pillow==12.3.0
-          mkdir -p candidates
-          curl -A "Mozilla/5.0" -fL -sS             "https://static.zerochan.net/Bloodborne.full.2318714.jpg"             -o /tmp/src01.jpg
-          curl -A "Mozilla/5.0" -fL -sS             "https://images.wallpapersden.com/image/download/bloodborne-gaming-2023_bW5rZmmUmZqaraWkpJRmbmdlrWZlbWU.jpg"             -o /tmp/src02-generated.jpg
-          curl -A "Mozilla/5.0" -fL -sS             "https://images.wallpapersden.com/image/download/bloodborne-gaming-2023_bW5rZmmUmZqaraWkpJRmbmdlrWZrZWU.jpg"             -o /tmp/src02-original.jpg
+
+          expected_head="dba1b79977470b8776854ac122ca09e3836829b9"
+          actual_head="$(git -C target rev-parse HEAD)"
+          if [ "$actual_head" != "$expected_head" ]; then
+            echo "Refusing to modify target: expected $expected_head, got $actual_head"
+            exit 1
+          fi
+
+          mkdir -p target/assets/loading_screens
+
+          base64 -d helper/.tmp-loading-transfer/loading_01.b64 > target/assets/loading_screens/loading_01.jpg
+          base64 -d helper/.tmp-loading-transfer/loading_02.b64 > target/assets/loading_screens/loading_02.jpg
+
+          curl -A "Mozilla/5.0" -fL --retry 2 -sS             "https://images5.alphacoders.com/534/534912.jpg"             -o target/assets/loading_screens/loading_03.jpg
+          curl -A "Mozilla/5.0" -fL --retry 2 -sS             "https://images6.alphacoders.com/585/585462.jpg"             -o target/assets/loading_screens/loading_04.jpg
+          curl -A "Mozilla/5.0" -fL --retry 2 -sS             "https://images7.alphacoders.com/860/860171.jpg"             -o target/assets/loading_screens/loading_05.jpg
+          curl -A "Mozilla/5.0" -fL --retry 2 -sS             "https://images7.alphacoders.com/130/1305260.jpeg"             -o target/assets/loading_screens/loading_06.jpg
+
+          (
+            cd target
+            echo "dc2da2d1b5b8f0c8410084420770990a62fc350d5c6ade8a69e4b90ebfda0732  assets/loading_screens/loading_01.jpg"
+            echo "6305642ddfe111954ad57aa4399a8188d2350401a1b7e1a7f534c73ac48686fb  assets/loading_screens/loading_02.jpg"
+            echo "47a129aa21ee6d88b95ff3811bb87e71465d2b25672899ca51028373ff16de8d  assets/loading_screens/loading_03.jpg"
+            echo "7224c7088960fcd6771922c1a143c08140d811a444f68e2a5454d9f7370aed32  assets/loading_screens/loading_04.jpg"
+            echo "5de428fdbc5eb6a646282ca330bfc946ff81c7e9587f7f60f0b7d189a4617a52  assets/loading_screens/loading_05.jpg"
+            echo "164e0ae7c807314ab67754f7a84c68f0dde328fe0cc3186b326006216f6afe71  assets/loading_screens/loading_06.jpg"
+          ) | (cd target && sha256sum -c -)
 
           python - <<'PY'
-          from PIL import Image
           from pathlib import Path
-          import hashlib, json
-
-          def H(p): return hashlib.sha256(Path(p).read_bytes()).hexdigest()
-
-          s1=Image.open("/tmp/src01.jpg")
-          c1=s1.crop((0,0,1920,1080))
-          c1.save("candidates/re01.jpg",format="JPEG",quality=75,subsampling=0,optimize=True,xmp=s1.info.get("xmp"))
-          print("re01",Path("candidates/re01.jpg").stat().st_size,H("candidates/re01.jpg"))
-
-          s2=Image.open("/tmp/src02-generated.jpg")
-          s2.save("candidates/re02-generated.jpg",format="JPEG",quality=75,subsampling=0,optimize=True)
-          print("re02-generated",Path("candidates/re02-generated.jpg").stat().st_size,H("candidates/re02-generated.jpg"))
-
-          so=Image.open("/tmp/src02-original.jpg")
-          print("src02-original",so.size,so.info.keys(),len(so.info.get("icc_profile",b"")),len(so.info.get("xmp",b"") or b""))
-          # Save the original source and a few natural 1920x1080 crops so local
-          # comparison can identify exactly how the user's final was produced.
-          Path("candidates/src02-original.jpg").write_bytes(Path("/tmp/src02-original.jpg").read_bytes())
-          Path("candidates/src02-generated.jpg").write_bytes(Path("/tmp/src02-generated.jpg").read_bytes())
-          for y in (0,260,520):
-              if y+1080<=so.height:
-                  crop=so.crop((0,y,1920,y+1080))
-                  kw=dict(format="JPEG",quality=75,subsampling=0,optimize=True)
-                  if so.info.get("icc_profile"): kw["icc_profile"]=so.info["icc_profile"]
-                  if so.info.get("xmp"): kw["xmp"]=so.info["xmp"]
-                  out=f"candidates/re02-original-y{y}.jpg"
-                  crop.save(out,**kw)
-                  print(out,Path(out).stat().st_size,H(out))
+          p = Path("target/.github/workflows/windows-offline-build.yml")
+          text = p.read_text(encoding="utf-8")
+          asset_line = '      - "assets/**"\n'
+          if asset_line not in text:
+              marker = '      - "launcher-windows/**"\n'
+              if marker not in text:
+                  raise SystemExit("push.paths insertion marker not found")
+              text = text.replace(marker, marker + asset_line, 1)
+              p.write_text(text, encoding="utf-8")
+          if 'cp -f assets/loading_screens/loading_*.jpg package/assets/loading_screens/' not in text:
+              raise SystemExit("portable package no longer copies loading_*.jpg")
           PY
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: loading-image-candidates
-          path: candidates/
-          if-no-files-found: error
-          retention-days: 1
+          cd target
+
+          test "$(find assets/loading_screens -maxdepth 1 -type f -name 'loading_*.jpg' | wc -l)" -eq 6
+          grep -Fq -- '- "assets/**"' .github/workflows/windows-offline-build.yml
+          grep -Fq 'cp -f assets/loading_screens/loading_*.jpg package/assets/loading_screens/' .github/workflows/windows-offline-build.yml
+
+          git add             .github/workflows/windows-offline-build.yml             assets/loading_screens/loading_01.jpg             assets/loading_screens/loading_02.jpg             assets/loading_screens/loading_03.jpg             assets/loading_screens/loading_04.jpg             assets/loading_screens/loading_05.jpg             assets/loading_screens/loading_06.jpg
+
+          expected_files="$(cat <<'EOF'
+          .github/workflows/windows-offline-build.yml
+          assets/loading_screens/loading_01.jpg
+          assets/loading_screens/loading_02.jpg
+          assets/loading_screens/loading_03.jpg
+          assets/loading_screens/loading_04.jpg
+          assets/loading_screens/loading_05.jpg
+          assets/loading_screens/loading_06.jpg
+          EOF
+          )"
+          actual_files="$(git diff --cached --name-only)"
+          if [ "$actual_files" != "$expected_files" ]; then
+            echo "Unexpected staged file set:"
+            printf '%s\n' "$actual_files"
+            exit 1
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "assets: bundle six custom loading screens"
+          git push origin HEAD:custom-loading-screens-v1
