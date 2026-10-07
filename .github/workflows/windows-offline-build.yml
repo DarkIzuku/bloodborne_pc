@@ -90,7 +90,7 @@ jobs:
         shell: msys2 {0}
         run: |
           set -e
-          python -m py_compile scripts/build_loading_gfx.py
+          python -m py_compile scripts/build_loading_gfx.py scripts/build_loading_tpf.py
 
       - name: Fetch DLSS 310.9.1
         shell: msys2 {0}
@@ -131,6 +131,16 @@ jobs:
           Expand-Archive python-embed.zip -DestinationPath package/tools/python -Force
           $pth = Get-ChildItem package/tools/python/python*._pth | Select-Object -First 1
           if ($pth) { Add-Content $pth.FullName "..\..\scripts" }
+
+      - name: Download pinned DirectXTex texconv
+        shell: pwsh
+        run: |
+          $url = "https://github.com/microsoft/DirectXTex/releases/download/may2026/texconv.exe"
+          $expected = "dcfdec10244e02cf5037fba089c55fb7e1326b1c8181742d77d15fa5cb5eef06"
+          New-Item -ItemType Directory -Force -Path package/tools/directxtex | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile package/tools/directxtex/texconv.exe
+          $actual = (Get-FileHash package/tools/directxtex/texconv.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "texconv SHA256 mismatch: $actual" }
 
       - name: Assemble portable test package
         shell: msys2 {0}

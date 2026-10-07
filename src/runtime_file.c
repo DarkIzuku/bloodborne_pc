@@ -112,23 +112,6 @@ static int translate(const char *guest,char *out,size_t size) {
     if (guest[0]!='/') snprintf(buffer,sizeof(buffer),"/app0/%s",guest);
     else snprintf(buffer,sizeof(buffer),"%s",guest);
 
-    /* The generated classic GFX redirects its existing external background image to one of these
-     * six names. Serve the packaged JPEG directly from the port without adding anything to the
-     * user's dump. Scaleform resolves relative external images through the same guest file API. */
-    const char *base=strrchr(buffer,'/');
-    base=base ? base+1 : buffer;
-    if (!strncmp(base,"bb_loading_",11) && strlen(base)==16 &&
-        base[11]>='0' && base[11]<='9' && base[12]>='0' && base[12]<='9' &&
-        !strcmp(base+13,".jpg")) {
-        unsigned index=(unsigned)(base[11]-'0')*10u+(unsigned)(base[12]-'0');
-        const char *assets=getenv("BB_LOADING_ASSETS_DIR");
-        if (assets && index>=1 && index<=6) {
-            int n=snprintf(out,size,"%s/loading_%02u.jpg",assets,index);
-            if (n<0 || (size_t)n>=size) return ENAMETOOLONG;
-            return access(out,R_OK) ? ENOENT : 0;
-        }
-    }
-
     // Bloodborne 1.09 uses nowloading2.gfx for the item-card loading screen. The original
     // 1.00/1.03 presentation is still shipped as nowloading.gfx. Redirecting the guest path
     // gives us the classic screen without modifying, copying or replacing the user's game files.
@@ -143,34 +126,24 @@ static int translate(const char *guest,char *out,size_t size) {
         const size_t blen=strlen(buffer), slen=strlen(suffix);
         if (blen>=slen && !strcmp(buffer+blen-slen,suffix)) {
             static int announced=0;
-            const char *custom_dir=getenv("BB_CUSTOM_LOADING_GFX_DIR");
+            const char *custom_dir=getenv("BB_CUSTOM_LOADING_TPF_DIR");
             if (custom_dir && *custom_dir) {
-                /* translate() is used by stat/access/open. They must all resolve to the SAME
-                 * generated movie during one Scaleform load; choosing again here can make the
-                 * stat size belong to one variant while open/read serves another. */
                 host_lock(&lock);
                 if (custom_loading_selection < 0) {
-                    custom_loading_selection=(int)loading_random_index();
-                    printf("Runtime: custom classic loading screen selected %d/6\n",
-                           custom_loading_selection+1);
-                }
-                unsigned first=(unsigned)custom_loading_selection;
-                host_unlock(&lock);
-                for (unsigned attempt=0;attempt<6;++attempt) {
-                    unsigned index=(first+attempt)%6u;
-                    char candidate[PATH_MAX];
-                    int n=snprintf(candidate,sizeof(candidate),"%s/nowloading-custom-%02u.gfx",
-                                   custom_dir,index+1u);
-                    if (n>0 && (size_t)n<sizeof(candidate) && !access(candidate,R_OK)) {
-                        if ((size_t)snprintf(out,size,"%s",candidate)>=size) return ENAMETOOLONG;
-                        if (index != first) {
-                            host_lock(&lock);
+                    unsigned first=loading_random_index();
+                    for (unsigned attempt=0;attempt<6;++attempt) {
+                        unsigned index=(first+attempt)%6u;
+                        char candidate[PATH_MAX];
+                        int n=snprintf(candidate,sizeof(candidate),
+                                       "%s/nowloading-custom-%02u.tpf.dcx",custom_dir,index+1u);
+                        if (n>0 && (size_t)n<sizeof(candidate) && !access(candidate,R_OK)) {
                             custom_loading_selection=(int)index;
-                            host_unlock(&lock);
+                            printf("Runtime: custom classic loading texture selected %u/6\n",index+1u);
+                            break;
                         }
-                        return 0;
                     }
                 }
+                host_unlock(&lock);
             }
             buffer[blen-slen]='\0';
             strncat(buffer,"/dvdroot_ps4/menu/nowloading.gfx",
@@ -178,6 +151,24 @@ static int translate(const char *guest,char *out,size_t size) {
             if (!announced) {
                 puts("Runtime: classic loading screen enabled (nowloading2.gfx -> nowloading.gfx)");
                 announced=1;
+            }
+        }
+
+        /* The classic GFX resolves MENU_NowLoading_00001 from this texture package. Redirect the
+         * package to the selected port-owned copy; no game file is modified. */
+        const char *tpf_suffix="/dvdroot_ps4/menu/nowloading.tpf.dcx";
+        const size_t tlen=strlen(buffer), tslen=strlen(tpf_suffix);
+        if (tlen>=tslen && !strcmp(buffer+tlen-tslen,tpf_suffix) &&
+            custom_loading_selection>=0) {
+            const char *custom_dir=getenv("BB_CUSTOM_LOADING_TPF_DIR");
+            if (custom_dir && *custom_dir) {
+                char candidate[PATH_MAX];
+                int n=snprintf(candidate,sizeof(candidate),"%s/nowloading-custom-%02d.tpf.dcx",
+                               custom_dir,custom_loading_selection+1);
+                if (n>0 && (size_t)n<sizeof(candidate) && !access(candidate,R_OK)) {
+                    if ((size_t)snprintf(out,size,"%s",candidate)>=size) return ENAMETOOLONG;
+                    return 0;
+                }
             }
         }
     }
@@ -342,9 +333,8 @@ static int64_t do_close(int fd) {
     *f=(File){0};
     if (was_custom_loading) {
         if (custom_loading_open_count) --custom_loading_open_count;
-        /* Re-arm only after Scaleform has finished with the selected movie. The next loading
-         * screen can then choose a new background, while stat/open/read within this one remain
-         * byte-for-byte consistent. */
+        /* Re-arm after the selected custom TPF has been consumed. The next classic loading
+         * screen will choose another packaged background. */
         if (!custom_loading_open_count) custom_loading_selection=-1;
     }
     host_unlock(&lock);
