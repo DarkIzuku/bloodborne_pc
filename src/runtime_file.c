@@ -12,7 +12,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #ifdef _WIN32
@@ -44,30 +43,13 @@ typedef struct {
 _Static_assert(sizeof(GuestStat)==120,"FreeBSD stat layout");
 
 typedef struct { char *names; size_t count, *offsets; unsigned char *types; } Listing;
-typedef struct { int used, host, custom_loading; Listing *dir; size_t position; char path[512]; } File;
+typedef struct { int used, host; Listing *dir; size_t position; char path[512]; } File;
 typedef struct { char guest[64]; char host[512]; } Mount;
 static File files[MAX_FILES];
 static Mount mounts[MAX_MOUNTS];
 static size_t mount_count, opens, reads, writes, missing;
 static uint64_t bytes_read;
 static HostMutex lock=HOST_MUTEX_INIT;
-static int custom_loading_selection=-1;
-static unsigned custom_loading_open_count;
-
-/* Host-side selector for the six loading movies. Keep randomness outside Scaleform: the former
- * generated AVM2 selector was the only new executable content in the crashing GFX. */
-static unsigned loading_random_index(void) {
-    static uint32_t counter;
-    uint32_t seed=__atomic_load_n(&counter,__ATOMIC_RELAXED);
-    if (!seed) {
-        uint32_t initial=(uint32_t)time(NULL) ^ (uint32_t)(uintptr_t)&counter ^ UINT32_C(0xA511E9B3);
-        if (!initial) initial=1;
-        __atomic_compare_exchange_n(&counter,&seed,initial,0,__ATOMIC_RELAXED,__ATOMIC_RELAXED);
-    }
-    uint32_t x=__atomic_add_fetch(&counter,UINT32_C(0x9E3779B9),__ATOMIC_RELAXED);
-    x^=x>>16; x*=UINT32_C(0x7FEB352D); x^=x>>15; x*=UINT32_C(0x846CA68B); x^=x>>16;
-    return x % 6u;
-}
 
 int runtime_file_mount(const char *guest,const char *host) {
     host_lock(&lock);
@@ -111,65 +93,6 @@ static int translate(const char *guest,char *out,size_t size) {
     char buffer[1024];
     if (guest[0]!='/') snprintf(buffer,sizeof(buffer),"/app0/%s",guest);
     else snprintf(buffer,sizeof(buffer),"%s",guest);
-
-    // Bloodborne 1.09 requests nowloading2.gfx. Serve the original classic movie unchanged.
-    // Custom artwork lives only in a port-owned copy of nowloading.tpf.dcx, selected per load.
-    static int classic_loading = -1;
-    if (classic_loading < 0) {
-        const char *e=getenv("BB_CLASSIC_LOADING");
-        classic_loading = !(e && e[0]=='0');
-    }
-    if (classic_loading) {
-        const char *gfx_suffix="/dvdroot_ps4/menu/nowloading2.gfx";
-        const size_t blen=strlen(buffer), glen=strlen(gfx_suffix);
-        if (blen>=glen && !strcmp(buffer+blen-glen,gfx_suffix)) {
-            const char *custom_dir=getenv("BB_CUSTOM_LOADING_TPF_DIR");
-            if (custom_dir && *custom_dir) {
-                host_lock(&lock);
-                if (custom_loading_selection < 0) {
-                    custom_loading_selection=(int)loading_random_index();
-                    printf("Runtime: custom classic loading texture selected %d/6\n",
-                           custom_loading_selection+1);
-                }
-                host_unlock(&lock);
-            }
-            const char *fixed_gfx=getenv("BB_CUSTOM_LOADING_GFX_FIXED");
-            if (fixed_gfx && *fixed_gfx && !access(fixed_gfx,R_OK)) {
-                if ((size_t)snprintf(out,size,"%s",fixed_gfx)>=size) return ENAMETOOLONG;
-                return 0;
-            }
-            buffer[blen-glen]='\0';
-            strncat(buffer,"/dvdroot_ps4/menu/nowloading.gfx",
-                    sizeof(buffer)-strlen(buffer)-1);
-        }
-
-        const char *tpf_suffix="/dvdroot_ps4/menu/nowloading.tpf.dcx";
-        const size_t tlen=strlen(buffer), tslen=strlen(tpf_suffix);
-        if (tlen>=tslen && !strcmp(buffer+tlen-tslen,tpf_suffix)) {
-            const char *custom_dir=getenv("BB_CUSTOM_LOADING_TPF_DIR");
-            if (custom_dir && *custom_dir) {
-                host_lock(&lock);
-                if (custom_loading_selection < 0) {
-                    custom_loading_selection=(int)loading_random_index();
-                    printf("Runtime: custom classic loading texture preselected %d/6\n",
-                           custom_loading_selection+1);
-                }
-                unsigned index=(unsigned)custom_loading_selection;
-                host_unlock(&lock);
-                char candidate[PATH_MAX];
-                int n=snprintf(candidate,sizeof(candidate),"%s/nowloading-custom-%02u.tpf.dcx",
-                               custom_dir,index+1u);
-                if (n>0 && (size_t)n<sizeof(candidate) && !access(candidate,R_OK)) {
-                    static unsigned tpf_redirects;
-                    if (__atomic_fetch_add(&tpf_redirects,1,__ATOMIC_RELAXED)<32)
-                        printf("Runtime: custom loading TPF redirect %u -> variant %u/6\n",
-                               tpf_redirects,index+1u);
-                    if ((size_t)snprintf(out,size,"%s",candidate)>=size) return ENAMETOOLONG;
-                    return 0;
-                }
-            }
-        }
-    }
 
     for (const char *p=buffer;(p=strstr(p,".."));p+=2)
         if ((p==buffer || p[-1]=='/') && (p[2]==0 || p[2]=='/')) return EACCES;
@@ -301,13 +224,8 @@ static int64_t do_open(const char *guest,int flags,int mode) {
     int fd=-1;
     for (int i=3;i<MAX_FILES;++i) if (!files[i].used) { fd=i; break; }
     if (fd<0) { host_unlock(&lock); if (host>=0) close(host); free_listing(dir); return -EMFILE; }
-    const char *loading_name="nowloading2.gfx";
-    size_t guest_len=strlen(guest), loading_len=strlen(loading_name);
-    int is_loading_movie=guest_len>=loading_len &&
-                         !strcmp(guest+guest_len-loading_len,loading_name);
-    files[fd]=(File){.used=1,.host=host,.dir=dir,.custom_loading=is_loading_movie};
+    files[fd]=(File){.used=1,.host=host,.dir=dir};
     snprintf(files[fd].path,sizeof(files[fd].path),"%s",guest);
-    if (files[fd].custom_loading) ++custom_loading_open_count;
     ++opens;
     host_unlock(&lock);
     if (audio_trace() && strstr(guest,"sound/")) printf("Audio trace: open(%s) -> fd %d, %lld bytes\n",guest,fd,(long long)s.st_size);
@@ -329,19 +247,9 @@ static int64_t do_close(int fd) {
     host_lock(&lock);
     File *f=get(fd);
     if (!f) { host_unlock(&lock); return -EBADF; }
-    int was_custom_loading=f->custom_loading;
     if (f->host>=0) close(f->host);
     free_listing(f->dir);
     *f=(File){0};
-    if (was_custom_loading) {
-        if (custom_loading_open_count) --custom_loading_open_count;
-        /* Re-arm after the original classic movie closes. If Bloodborne reopens the TPF for the
-         * next movie, that load receives a newly selected validated texture package. */
-        if (!custom_loading_open_count) {
-            custom_loading_selection=-1;
-            puts("Runtime: custom classic loading selection re-armed");
-        }
-    }
     host_unlock(&lock);
     return 0;
 }

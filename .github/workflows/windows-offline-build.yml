@@ -7,7 +7,6 @@ on:
     branches:
       - seamless-dev
       - offline-performance-precache-buildcheck
-      - custom-loading-screens-v1
     paths:
       - "src/**"
       - "gpu/**"
@@ -15,7 +14,6 @@ on:
       - "scripts/**"
       - "tools/**"
       - "launcher-windows/**"
-      - "assets/**"
       - "build.sh"
       - "run.bat"
       - ".github/workflows/windows-offline-build.yml"
@@ -86,12 +84,6 @@ jobs:
           out/gpu/motion-shader-test.exe
           out/gpu/image-overlap-test.exe
 
-      - name: Validate custom loading screen builder
-        shell: msys2 {0}
-        run: |
-          set -e
-          python -m py_compile scripts/build_loading_gfx.py scripts/build_loading_tpf.py scripts/patch_loading_gfx_dimensions.py
-
       - name: Fetch DLSS 310.9.1
         shell: msys2 {0}
         run: bash tools/fetch_dlss.sh out
@@ -132,47 +124,17 @@ jobs:
           $pth = Get-ChildItem package/tools/python/python*._pth | Select-Object -First 1
           if ($pth) { Add-Content $pth.FullName "..\..\scripts" }
 
-      - name: Download pinned DirectXTex texconv
-        shell: pwsh
-        run: |
-          $url = "https://github.com/microsoft/DirectXTex/releases/download/may2026/texconv.exe"
-          $expected = "dcfdec10244e02cf5037fba089c55fb7e1326b1c8181742d77d15fa5cb5eef06"
-          New-Item -ItemType Directory -Force -Path package/tools/directxtex | Out-Null
-          Invoke-WebRequest -Uri $url -OutFile package/tools/directxtex/texconv.exe
-          $actual = (Get-FileHash package/tools/directxtex/texconv.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actual -ne $expected) { throw "texconv SHA256 mismatch: $actual" }
-
-      - name: Download pinned WitchyBND PS4 TPF tool
-        shell: pwsh
-        run: |
-          $url = "https://github.com/ividyon/WitchyBND/releases/download/3.0.1.0/WitchyBND-3.0.1.0-win-x64.zip"
-          $expected = "a3e6b2a0f7eac13f5e83b6602a1149322439c0662baa140ecdd84be28af50364"
-          Invoke-WebRequest -Uri $url -OutFile witchybnd.zip
-          $actual = (Get-FileHash witchybnd.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actual -ne $expected) { throw "WitchyBND SHA256 mismatch: $actual" }
-          Remove-Item -Recurse -Force witchybnd-extract -ErrorAction SilentlyContinue
-          Expand-Archive witchybnd.zip -DestinationPath witchybnd-extract -Force
-          $exe = Get-ChildItem witchybnd-extract -Recurse -Filter WitchyBND.exe | Select-Object -First 1
-          if (-not $exe) { throw "WitchyBND.exe not found in pinned release" }
-          New-Item -ItemType Directory -Force -Path package/tools/witchybnd | Out-Null
-          Copy-Item -Path (Join-Path $exe.Directory.FullName "*") -Destination package/tools/witchybnd -Recurse -Force
-          if (-not (Test-Path package/tools/witchybnd/WitchyBND.exe)) { throw "WitchyBND packaging failed" }
-
       - name: Assemble portable test package
         shell: msys2 {0}
         run: |
           set -e
-          mkdir -p package/out package/scripts package/patches package/mods package/launcher-assets package/assets/loading_screens
+          mkdir -p package/out package/scripts package/patches package/mods package/launcher-assets
           cp -f launcher-publish/BloodborneLauncher.exe package/
           cp -f run.bat build.sh setup.bat package/
           cp -f out/bb-probe.exe out/bb-gpu-capabilities.exe package/out/
           cp -f launcher-windows/BloodborneLauncher/Assets/bloodborne.ico package/out/
           test ! -f out/nvngx_dlss.dll || cp -f out/nvngx_dlss.dll package/out/
           cp -rf scripts/* package/scripts/
-          if [ -d assets/loading_screens ]; then
-            cp -f assets/loading_screens/loading_*.jpg package/assets/loading_screens/ 2>/dev/null || true
-            cp -f assets/loading_screens/loading_*.jpeg package/assets/loading_screens/ 2>/dev/null || true
-          fi
           test ! -d patches || cp -rf patches/* package/patches/
           test ! -d fsr4_shaders || cp -rf fsr4_shaders package/
           test ! -f LICENSE || cp -f LICENSE package/
