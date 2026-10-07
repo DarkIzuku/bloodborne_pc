@@ -7,6 +7,7 @@ on:
     branches:
       - seamless-dev
       - offline-performance-precache-buildcheck
+      - upstream-0.3-core-port
     paths:
       - "src/**"
       - "gpu/**"
