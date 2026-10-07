@@ -109,41 +109,32 @@ def main():
     remembered.write_text(str(original), encoding='utf-8')
     os.environ['BB_GAME_DIR'] = str(original)
 
-    # Keep the original classic movie structure and resource package format. Build six GFX
-    # variants that only rename the existing external TGA resource, plus one extended TPF that
-    # contains those six resources. This survives the game's resource caching and keeps the dump
-    # read-only.
+    # Build six self-contained classic movies. Each one preserves Bloodborne's original timeline
+    # and display-list graph, replacing only the existing external artwork definition with an
+    # embedded JPEG on the same character ID. This avoids the unreliable external TPF/TGA path.
     os.environ.pop('BB_CUSTOM_LOADING_GFX', None)
     os.environ.pop('BB_CUSTOM_LOADING_GFX_DIR', None)
     os.environ.pop('BB_CUSTOM_LOADING_TPF_DIR', None)
     os.environ.pop('BB_CUSTOM_LOADING_TPF', None)
     classic_gfx = original / 'dvdroot_ps4' / 'menu' / 'nowloading.gfx'
-    classic_tpf = original / 'dvdroot_ps4' / 'menu' / 'nowloading.tpf.dcx'
     loading_assets = ROOT / 'assets' / 'loading_screens'
     texconv = ROOT / 'tools' / 'directxtex' / 'texconv.exe'
-    witchy = ROOT / 'tools' / 'witchybnd' / 'WitchyBND.exe'
     custom_dir = out / 'ui' / 'loading_screens'
     gfx_builder = SCRIPTS / 'build_loading_gfx.py'
-    tpf_builder = SCRIPTS / 'build_loading_tpf.py'
     custom_gfx = [custom_dir / f'nowloading-custom-{index:02d}.gfx'
                   for index in range(1, 7)]
-    custom_tpf = custom_dir / 'nowloading-custom.tpf.dcx'
-    if (classic_gfx.is_file() and classic_tpf.is_file() and loading_assets.is_dir()
-            and gfx_builder.is_file() and tpf_builder.is_file()
-            and texconv.is_file() and witchy.is_file()):
+    if (classic_gfx.is_file() and loading_assets.is_dir()
+            and gfx_builder.is_file() and texconv.is_file()):
         gfx_status = run([PYTHON, gfx_builder, classic_gfx,
-                          '--images-dir', loading_assets, '--out-dir', custom_dir], check=False)
-        tpf_status = run([PYTHON, tpf_builder, classic_tpf,
                           '--images-dir', loading_assets, '--texconv', texconv,
-                          '--witchy', witchy, '--output', custom_tpf], check=False)
-        if (gfx_status == 0 and tpf_status == 0 and
-                all(path.is_file() for path in custom_gfx) and custom_tpf.is_file()):
+                          '--out-dir', custom_dir], check=False)
+        if gfx_status == 0 and all(path.is_file() for path in custom_gfx):
             os.environ['BB_CUSTOM_LOADING_GFX_DIR'] = str(custom_dir.resolve())
-            os.environ['BB_CUSTOM_LOADING_TPF'] = str(custom_tpf.resolve())
         else:
-            print('Loading screens: custom GFX/TPF resources unavailable; using the original classic screen')
+            print('Loading screens: self-contained custom GFX unavailable; '
+                  'using the original classic screen')
     else:
-        print('Loading screens: classic GFX/TPF, packaged artwork, texconv or WitchyBND missing; '
+        print('Loading screens: classic GFX, packaged artwork or texconv missing; '
               'using the original classic screen')
 
     # The in-game menu's "Apply and restart" runs this launcher again (probe.c runtime_restart).

@@ -162,20 +162,6 @@ static int translate(const char *guest,char *out,size_t size) {
         }
     }
 
-    /* The game can cache nowloading.tpf.dcx before the loading movie is requested. Always serve
-     * our extended port-owned copy from process start; it contains the untouched original texture
-     * plus BB_Loading_01..06, so each randomly selected GFX can resolve its resource later. */
-    {
-        const char *tpf_suffix="/dvdroot_ps4/menu/nowloading.tpf.dcx";
-        const size_t tlen=strlen(buffer), tslen=strlen(tpf_suffix);
-        if (tlen>=tslen && !strcmp(buffer+tlen-tslen,tpf_suffix)) {
-            const char *custom_tpf=getenv("BB_CUSTOM_LOADING_TPF");
-            if (custom_tpf && *custom_tpf && !access(custom_tpf,R_OK)) {
-                if ((size_t)snprintf(out,size,"%s",custom_tpf)>=size) return ENAMETOOLONG;
-                return 0;
-            }
-        }
-    }
     for (const char *p=buffer;(p=strstr(p,".."));p+=2)
         if ((p==buffer || p[-1]=='/') && (p[2]==0 || p[2]=='/')) return EACCES;
     host_lock(&lock);
@@ -337,8 +323,8 @@ static int64_t do_close(int fd) {
     *f=(File){0};
     if (was_custom_loading) {
         if (custom_loading_open_count) --custom_loading_open_count;
-        /* Re-arm after Scaleform closes the selected custom movie. The extended TPF may stay
-         * cached for the whole process; the next loading screen can still choose another name. */
+        /* Re-arm after Scaleform closes the selected self-contained movie. The next classic
+         * loading screen can choose another embedded background. */
         if (!custom_loading_open_count) custom_loading_selection=-1;
     }
     host_unlock(&lock);
