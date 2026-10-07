@@ -90,7 +90,7 @@ jobs:
         shell: msys2 {0}
         run: |
           set -e
-          python -m py_compile scripts/build_loading_gfx.py scripts/build_loading_tpf.py
+          python -m py_compile scripts/build_loading_gfx.py scripts/build_loading_tpf.py scripts/patch_loading_gfx_dimensions.py
 
       - name: Fetch DLSS 310.9.1
         shell: msys2 {0}

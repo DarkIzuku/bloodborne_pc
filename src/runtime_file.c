@@ -133,6 +133,11 @@ static int translate(const char *guest,char *out,size_t size) {
                 }
                 host_unlock(&lock);
             }
+            const char *fixed_gfx=getenv("BB_CUSTOM_LOADING_GFX_FIXED");
+            if (fixed_gfx && *fixed_gfx && !access(fixed_gfx,R_OK)) {
+                if ((size_t)snprintf(out,size,"%s",fixed_gfx)>=size) return ENAMETOOLONG;
+                return 0;
+            }
             buffer[blen-glen]='\0';
             strncat(buffer,"/dvdroot_ps4/menu/nowloading.gfx",
                     sizeof(buffer)-strlen(buffer)-1);
@@ -155,6 +160,10 @@ static int translate(const char *guest,char *out,size_t size) {
                 int n=snprintf(candidate,sizeof(candidate),"%s/nowloading-custom-%02u.tpf.dcx",
                                custom_dir,index+1u);
                 if (n>0 && (size_t)n<sizeof(candidate) && !access(candidate,R_OK)) {
+                    static unsigned tpf_redirects;
+                    if (__atomic_fetch_add(&tpf_redirects,1,__ATOMIC_RELAXED)<32)
+                        printf("Runtime: custom loading TPF redirect %u -> variant %u/6\n",
+                               tpf_redirects,index+1u);
                     if ((size_t)snprintf(out,size,"%s",candidate)>=size) return ENAMETOOLONG;
                     return 0;
                 }
@@ -292,10 +301,10 @@ static int64_t do_open(const char *guest,int flags,int mode) {
     int fd=-1;
     for (int i=3;i<MAX_FILES;++i) if (!files[i].used) { fd=i; break; }
     if (fd<0) { host_unlock(&lock); if (host>=0) close(host); free_listing(dir); return -EMFILE; }
-    const char *loading_suffix="/dvdroot_ps4/menu/nowloading2.gfx";
-    size_t guest_len=strlen(guest), loading_len=strlen(loading_suffix);
+    const char *loading_name="nowloading2.gfx";
+    size_t guest_len=strlen(guest), loading_len=strlen(loading_name);
     int is_loading_movie=guest_len>=loading_len &&
-                         !strcmp(guest+guest_len-loading_len,loading_suffix);
+                         !strcmp(guest+guest_len-loading_len,loading_name);
     files[fd]=(File){.used=1,.host=host,.dir=dir,.custom_loading=is_loading_movie};
     snprintf(files[fd].path,sizeof(files[fd].path),"%s",guest);
     if (files[fd].custom_loading) ++custom_loading_open_count;
@@ -328,7 +337,10 @@ static int64_t do_close(int fd) {
         if (custom_loading_open_count) --custom_loading_open_count;
         /* Re-arm after the original classic movie closes. If Bloodborne reopens the TPF for the
          * next movie, that load receives a newly selected validated texture package. */
-        if (!custom_loading_open_count) custom_loading_selection=-1;
+        if (!custom_loading_open_count) {
+            custom_loading_selection=-1;
+            puts("Runtime: custom classic loading selection re-armed");
+        }
     }
     host_unlock(&lock);
     return 0;

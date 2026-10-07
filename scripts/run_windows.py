@@ -122,20 +122,28 @@ def main():
     witchy = ROOT / 'tools' / 'witchybnd' / 'WitchyBND.exe'
     custom_dir = out / 'ui' / 'loading_screens'
     tpf_builder = SCRIPTS / 'build_loading_tpf.py'
+    gfx_aspect_builder = SCRIPTS / 'patch_loading_gfx_dimensions.py'
+    classic_gfx = original / 'dvdroot_ps4' / 'menu' / 'nowloading.gfx'
+    custom_gfx = custom_dir / 'nowloading-classic-16x9.gfx'
     custom_tpf = [custom_dir / f'nowloading-custom-{index:02d}.tpf.dcx'
                   for index in range(1, 7)]
-    if (classic_tpf.is_file() and loading_assets.is_dir() and tpf_builder.is_file()
+    if (classic_tpf.is_file() and classic_gfx.is_file() and loading_assets.is_dir()
+            and tpf_builder.is_file() and gfx_aspect_builder.is_file()
             and texconv.is_file() and witchy.is_file()):
         tpf_status = run([PYTHON, tpf_builder, classic_tpf,
                           '--images-dir', loading_assets, '--texconv', texconv,
                           '--witchy', witchy, '--out-dir', custom_dir], check=False)
-        if tpf_status == 0 and all(path.is_file() for path in custom_tpf):
+        gfx_status = run([PYTHON, gfx_aspect_builder, classic_gfx,
+                          '--out', custom_gfx], check=False)
+        if (tpf_status == 0 and gfx_status == 0 and custom_gfx.is_file()
+                and all(path.is_file() for path in custom_tpf)):
             os.environ['BB_CUSTOM_LOADING_TPF_DIR'] = str(custom_dir.resolve())
+            os.environ['BB_CUSTOM_LOADING_GFX_FIXED'] = str(custom_gfx.resolve())
         else:
-            print('Loading screens: validated custom TPF variants unavailable; '
+            print('Loading screens: validated TPF/aspect GFX unavailable; '
                   'using the original classic screen')
     else:
-        print('Loading screens: classic TPF, packaged artwork, texconv or WitchyBND missing; '
+        print('Loading screens: classic GFX/TPF, packaged artwork, texconv or WitchyBND missing; '
               'using the original classic screen')
 
     # The in-game menu's "Apply and restart" runs this launcher again (probe.c runtime_restart).
