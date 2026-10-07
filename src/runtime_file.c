@@ -51,11 +51,6 @@ static size_t mount_count, opens, reads, writes, missing;
 static uint64_t bytes_read;
 static HostMutex lock=HOST_MUTEX_INIT;
 
-/* Diagnostic only: trace the file/resource traffic around Bloodborne's item-card loading movie.
- * This does not redirect or modify any game file. It is capped so one test run stays readable. */
-static unsigned loading_glyph_trace_budget;
-static unsigned loading_glyph_trace_epoch;
-
 int runtime_file_mount(const char *guest,const char *host) {
     host_lock(&lock);
     for (size_t i=0;i<mount_count;++i) if (!strcmp(mounts[i].guest,guest)) {
@@ -98,25 +93,6 @@ static int translate(const char *guest,char *out,size_t size) {
     char buffer[1024];
     if (guest[0]!='/') snprintf(buffer,sizeof(buffer),"/app0/%s",guest);
     else snprintf(buffer,sizeof(buffer),"%s",guest);
-
-    const char *trace_name=strrchr(buffer,'/');
-    trace_name=trace_name ? trace_name+1 : buffer;
-    if (!strcmp(trace_name,"nowloading2.gfx")) {
-        unsigned expected=0;
-        if (__atomic_compare_exchange_n(&loading_glyph_trace_budget,&expected,384,0,
-                                        __ATOMIC_RELAXED,__ATOMIC_RELAXED)) {
-            unsigned epoch=__atomic_add_fetch(&loading_glyph_trace_epoch,1,__ATOMIC_RELAXED);
-            printf("Loading glyph trace: BEGIN %u at %s\n",epoch,buffer);
-        }
-    }
-    unsigned trace_left=__atomic_load_n(&loading_glyph_trace_budget,__ATOMIC_RELAXED);
-    if (trace_left) {
-        unsigned before=__atomic_fetch_sub(&loading_glyph_trace_budget,1,__ATOMIC_RELAXED);
-        if (before) {
-            unsigned epoch=__atomic_load_n(&loading_glyph_trace_epoch,__ATOMIC_RELAXED);
-            printf("Loading glyph trace: %u path %s\n",epoch,buffer);
-        }
-    }
 
     for (const char *p=buffer;(p=strstr(p,".."));p+=2)
         if ((p==buffer || p[-1]=='/') && (p[2]==0 || p[2]=='/')) return EACCES;
@@ -253,11 +229,6 @@ static int64_t do_open(const char *guest,int flags,int mode) {
     ++opens;
     host_unlock(&lock);
     if (audio_trace() && strstr(guest,"sound/")) printf("Audio trace: open(%s) -> fd %d, %lld bytes\n",guest,fd,(long long)s.st_size);
-    if (__atomic_load_n(&loading_glyph_trace_budget,__ATOMIC_RELAXED)) {
-        unsigned epoch=__atomic_load_n(&loading_glyph_trace_epoch,__ATOMIC_RELAXED);
-        printf("Loading glyph trace: %u OPEN %s -> fd %d, %lld bytes\n",
-               epoch,guest,fd,(long long)s.st_size);
-    }
     const char *mod_trace=getenv("BB_MOD_TRACE"), *mod_root=getenv("BB_MODS_DIR");
     if (mod_trace && mod_trace[0]=='1' && mod_root) {
         char actual[PATH_MAX],root[PATH_MAX];
