@@ -108,6 +108,25 @@ def main():
     original = game.resolve()
     remembered.write_text(str(original), encoding='utf-8')
     os.environ['BB_GAME_DIR'] = str(original)
+
+    # Build the port-owned classic loading movie from the user's own classic GFX. The game dump
+    # stays read-only: six packaged backgrounds are embedded into out/ui/nowloading-custom.gfx,
+    # and runtime_file.c serves that generated host file when Bloodborne requests nowloading2.gfx.
+    os.environ.pop('BB_CUSTOM_LOADING_GFX', None)
+    classic_gfx = original / 'dvdroot_ps4' / 'menu' / 'nowloading.gfx'
+    loading_assets = ROOT / 'assets' / 'loading_screens'
+    custom_gfx = out / 'ui' / 'nowloading-custom.gfx'
+    loading_builder = SCRIPTS / 'build_loading_gfx.py'
+    if classic_gfx.is_file() and loading_assets.is_dir() and loading_builder.is_file():
+        status = run([PYTHON, loading_builder, classic_gfx,
+                      '--images-dir', loading_assets, '--out', custom_gfx], check=False)
+        if status == 0 and custom_gfx.is_file():
+            os.environ['BB_CUSTOM_LOADING_GFX'] = str(custom_gfx.resolve())
+        else:
+            print('Loading screens: custom GFX unavailable; using the original classic screen')
+    else:
+        print('Loading screens: packaged assets or classic GFX missing; using the original classic screen')
+
     # The in-game menu's "Apply and restart" runs this launcher again (probe.c runtime_restart).
     os.environ['BB_RESTART_COMMAND'] = subprocess.list2cmdline([PYTHON, str(Path(__file__).resolve()), *sys.argv[1:]])
 
