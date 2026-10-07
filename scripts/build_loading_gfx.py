@@ -433,11 +433,13 @@ def parse_external_image(code, payload):
 
 
 def rewrite_external_image(payload, info, file_name):
-    """Keep the same image id/dimensions and only redirect its source to our packaged JPEG."""
+    """Keep the same image id, dimensions and original Scaleform image format."""
     if info['code'] == 1009:
-        prefix = struct.pack('<HHHHH', info['key'], info['id_type'], 10, info['width'], info['height'])
+        prefix = struct.pack('<HHHHH', info['key'], info['id_type'], info['bitmap_format'],
+                             info['width'], info['height'])
     else:
-        prefix = struct.pack('<HHHH', info['key'], 10, info['width'], info['height'])
+        prefix = struct.pack('<HHHH', info['key'], info['bitmap_format'],
+                             info['width'], info['height'])
     return (prefix + write_net_string(info['export_name']) + write_net_string(file_name) +
             info['extra'])
 
@@ -445,10 +447,10 @@ def rewrite_external_image(payload, info, file_name):
 def build_variants(source, images, outputs):
     """Generate six structurally-original GFX variants using Scaleform's external-image tag.
 
-    Bloodborne's exported GFX does not embed its background as DefineBitsJPEG2; GFxExport strips
-    images into external resources. Keep the original movie/tag graph and image character id, but
-    make the existing external-image definition load one packaged JPEG directly. No new sprite,
-    shape, character or ActionScript is added.
+    Bloodborne's exported GFX keeps the classic artwork as a Scaleform external image. Keep the
+    original movie/tag graph, image character id, dimensions and TGA format, and change only the
+    external resource name to one of six textures that we append to a port-owned copy of
+    nowloading.tpf.dcx. No new sprite, shape, character or ActionScript is added.
     """
     original = source.read_bytes()
     if original[:3] != b'GFX':
@@ -518,7 +520,7 @@ def build_variants(source, images, outputs):
 
     built = []
     for image_index, output in enumerate(outputs, start=1):
-        custom_name = f'bb_loading_{image_index:02d}.jpg'
+        custom_name = f'BB_Loading_{image_index:02d}.tga'
         rebuilt = bytearray(original[:start])
         replaced = False
         for code, payload in top:

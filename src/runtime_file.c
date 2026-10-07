@@ -126,24 +126,31 @@ static int translate(const char *guest,char *out,size_t size) {
         const size_t blen=strlen(buffer), slen=strlen(suffix);
         if (blen>=slen && !strcmp(buffer+blen-slen,suffix)) {
             static int announced=0;
-            const char *custom_dir=getenv("BB_CUSTOM_LOADING_TPF_DIR");
+            const char *custom_dir=getenv("BB_CUSTOM_LOADING_GFX_DIR");
             if (custom_dir && *custom_dir) {
                 host_lock(&lock);
                 if (custom_loading_selection < 0) {
-                    unsigned first=loading_random_index();
-                    for (unsigned attempt=0;attempt<6;++attempt) {
-                        unsigned index=(first+attempt)%6u;
-                        char candidate[PATH_MAX];
-                        int n=snprintf(candidate,sizeof(candidate),
-                                       "%s/nowloading-custom-%02u.tpf.dcx",custom_dir,index+1u);
-                        if (n>0 && (size_t)n<sizeof(candidate) && !access(candidate,R_OK)) {
+                    custom_loading_selection=(int)loading_random_index();
+                    printf("Runtime: custom classic loading screen selected %d/6\n",
+                           custom_loading_selection+1);
+                }
+                unsigned first=(unsigned)custom_loading_selection;
+                host_unlock(&lock);
+                for (unsigned attempt=0;attempt<6;++attempt) {
+                    unsigned index=(first+attempt)%6u;
+                    char candidate[PATH_MAX];
+                    int n=snprintf(candidate,sizeof(candidate),"%s/nowloading-custom-%02u.gfx",
+                                   custom_dir,index+1u);
+                    if (n>0 && (size_t)n<sizeof(candidate) && !access(candidate,R_OK)) {
+                        if ((size_t)snprintf(out,size,"%s",candidate)>=size) return ENAMETOOLONG;
+                        if (index != first) {
+                            host_lock(&lock);
                             custom_loading_selection=(int)index;
-                            printf("Runtime: custom classic loading texture selected %u/6\n",index+1u);
-                            break;
+                            host_unlock(&lock);
                         }
+                        return 0;
                     }
                 }
-                host_unlock(&lock);
             }
             buffer[blen-slen]='\0';
             strncat(buffer,"/dvdroot_ps4/menu/nowloading.gfx",
@@ -153,22 +160,19 @@ static int translate(const char *guest,char *out,size_t size) {
                 announced=1;
             }
         }
+    }
 
-        /* The classic GFX resolves MENU_NowLoading_00001 from this texture package. Redirect the
-         * package to the selected port-owned copy; no game file is modified. */
+    /* The game can cache nowloading.tpf.dcx before the loading movie is requested. Always serve
+     * our extended port-owned copy from process start; it contains the untouched original texture
+     * plus BB_Loading_01..06, so each randomly selected GFX can resolve its resource later. */
+    {
         const char *tpf_suffix="/dvdroot_ps4/menu/nowloading.tpf.dcx";
         const size_t tlen=strlen(buffer), tslen=strlen(tpf_suffix);
-        if (tlen>=tslen && !strcmp(buffer+tlen-tslen,tpf_suffix) &&
-            custom_loading_selection>=0) {
-            const char *custom_dir=getenv("BB_CUSTOM_LOADING_TPF_DIR");
-            if (custom_dir && *custom_dir) {
-                char candidate[PATH_MAX];
-                int n=snprintf(candidate,sizeof(candidate),"%s/nowloading-custom-%02d.tpf.dcx",
-                               custom_dir,custom_loading_selection+1);
-                if (n>0 && (size_t)n<sizeof(candidate) && !access(candidate,R_OK)) {
-                    if ((size_t)snprintf(out,size,"%s",candidate)>=size) return ENAMETOOLONG;
-                    return 0;
-                }
+        if (tlen>=tslen && !strcmp(buffer+tlen-tslen,tpf_suffix)) {
+            const char *custom_tpf=getenv("BB_CUSTOM_LOADING_TPF");
+            if (custom_tpf && *custom_tpf && !access(custom_tpf,R_OK)) {
+                if ((size_t)snprintf(out,size,"%s",custom_tpf)>=size) return ENAMETOOLONG;
+                return 0;
             }
         }
     }
@@ -333,8 +337,8 @@ static int64_t do_close(int fd) {
     *f=(File){0};
     if (was_custom_loading) {
         if (custom_loading_open_count) --custom_loading_open_count;
-        /* Re-arm after the selected custom TPF has been consumed. The next classic loading
-         * screen will choose another packaged background. */
+        /* Re-arm after Scaleform closes the selected custom movie. The extended TPF may stay
+         * cached for the whole process; the next loading screen can still choose another name. */
         if (!custom_loading_open_count) custom_loading_selection=-1;
     }
     host_unlock(&lock);

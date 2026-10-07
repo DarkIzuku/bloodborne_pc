@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Build six Bloodborne classic loading TPF variants without changing the user's dump.
+"""Build one extended Bloodborne classic-loading TPF containing all six packaged artworks.
 
-Bloodborne's classic nowloading.gfx references MENU_NowLoading_00001.tga through Scaleform, but
-the PS4 build resolves that image from dvdroot_ps4/menu/nowloading.tpf.dcx rather than opening the
-TGA as a normal file. This tool copies the user's own TPF in memory, replaces only that texture's
-PS4 swizzled payload with one packaged loading image, and writes port-owned DCX variants under out/.
+The user's dvdroot_ps4/menu/nowloading.tpf.dcx is never modified. Its original texture records and
+payloads are preserved, then six BC/DXGI-compatible PS4 textures named BB_Loading_01..06 are
+appended. The six conservative GFX variants can therefore choose a different texture every loading
+screen while the game resource manager may cache this TPF for the whole process.
 """
 import argparse
 import hashlib
@@ -18,7 +18,6 @@ import zlib
 EXPECTED_COUNT = 6
 TARGET_STEM = "MENU_NowLoading_00001"
 
-# DXGI value -> (texconv format name, bits per pixel, pixel/block dimension, bytes per pixel/block)
 DXGI = {
     28: ("R8G8B8A8_UNORM", 32, 1, 4),
     29: ("R8G8B8A8_UNORM_SRGB", 32, 1, 4),
@@ -81,6 +80,12 @@ def read_c_string(data, offset, encoding_type):
     return data[offset:end].decode("shift_jis", errors="replace")
 
 
+def encode_c_string(value, encoding_type):
+    if encoding_type == 1:
+        return value.encode("utf-16-le") + b"\0\0"
+    return value.encode("shift_jis") + b"\0"
+
+
 def parse_tpf(tpf):
     if len(tpf) < 16 or tpf[:4] != b"TPF\0":
         raise ValueError("decompressed loading texture package is not a TPF")
@@ -112,7 +117,7 @@ def parse_tpf(tpf):
             raise ValueError(f"invalid TPF data range for texture {stem!r}")
         records.append({
             "index": index,
-            "record_offset": record_offset,
+            "meta": bytes(tpf[record_offset:pos]),
             "data_offset": data_offset,
             "data_size": data_size,
             "format": fmt,
@@ -126,6 +131,7 @@ def parse_tpf(tpf):
             "stem_offset": stem_offset,
             "dxgi": dxgi,
             "stem": stem,
+            "stored": bytes(tpf[data_offset:data_offset + data_size]),
         })
     if not records:
         raise ValueError("loading TPF contains no textures")
@@ -136,16 +142,13 @@ def dds_payload(path):
     data = path.read_bytes()
     if len(data) < 128 or data[:4] != b"DDS ":
         raise ValueError("texconv did not produce a DDS")
-    offset = 128
-    if data[84:88] == b"DX10":
-        if len(data) < 148:
-            raise ValueError("truncated DX10 DDS")
-        offset = 148
+    offset = 148 if data[84:88] == b"DX10" else 128
+    if len(data) < offset:
+        raise ValueError("truncated DDS")
     return data[offset:]
 
 
 def morton(index, width, height):
-    # Exact Morton mapping used by FromSoftware PS4 textures (DrSwizzler/Soulstruct).
     params = [1, 1, index, width, height, 0, 0]
     while params[3] > 1 or params[4] > 1:
         if params[3] > 1:
@@ -175,10 +178,8 @@ def swizzle_level(linear, width, height, block_dim, bytes_per_set):
                 if pos + bytes_per_set > len(out):
                     return bytes(out)
                 tiled = morton(source_tile, 8, 8)
-                row = tiled // 8
-                col = tiled % 8
-                x = tile_x * 8 + col
-                y = tile_y * 8 + row
+                row, col = tiled // 8, tiled % 8
+                x, y = tile_x * 8 + col, tile_y * 8 + row
                 if x < sx and y < sy:
                     src = (y * sx + x) * bytes_per_set
                     out[pos:pos + bytes_per_set] = linear[src:src + bytes_per_set]
@@ -226,35 +227,48 @@ def make_texture(image, target, texconv, work):
     if not candidates:
         raise ValueError(f"texconv produced no DDS for {image.name}")
     payload = dds_payload(candidates[0])
-    return swizzle_dds(payload, target["width"], target["height"], target["mip_count"], target["dxgi"])
+    logical = swizzle_dds(payload, target["width"], target["height"],
+                          target["mip_count"], target["dxgi"])
+    return zlib.compress(logical, level=7) if target["texture_flags"] in (2, 3) else logical
 
 
-def rebuild_tpf(original, records, target_index, new_logical):
-    data_start = min(r["data_offset"] for r in records)
-    output = bytearray(original[:data_start])
+def build_extended_tpf(original, records, target, custom_stored, encoding_type):
+    entries = []
     for record in records:
-        while len(output) & 3:
-            output.append(0)
-        new_offset = len(output)
-        stored = original[record["data_offset"]:record["data_offset"] + record["data_size"]]
-        if record["index"] == target_index:
-            logical = new_logical
-            # Preserve the original allocation footprint where possible. Some PS4 UI textures have
-            # a small tiled/mip tail pad that texconv does not emit explicitly.
-            original_logical = zlib.decompress(stored) if record["texture_flags"] in (2, 3) else stored
-            if len(logical) < len(original_logical):
-                logical += b"\0" * (len(original_logical) - len(logical))
-            elif len(logical) > len(original_logical):
-                raise ValueError(
-                    f"replacement texture is larger than original logical payload "
-                    f"({len(logical)} > {len(original_logical)})"
-                )
-            stored = zlib.compress(logical, level=7) if record["texture_flags"] in (2, 3) else logical
-        output.extend(stored)
-        struct.pack_into("<I", output, record["record_offset"], new_offset)
-        struct.pack_into("<i", output, record["record_offset"] + 4, len(stored))
-    struct.pack_into("<i", output, 4, len(output) - data_start)
-    return bytes(output)
+        entries.append({"meta": record["meta"], "stem": record["stem"], "stored": record["stored"]})
+    for index, stored in enumerate(custom_stored, start=1):
+        entries.append({
+            "meta": target["meta"],
+            "stem": f"BB_Loading_{index:02d}",
+            "stored": stored,
+        })
+
+    out = bytearray(original[:16])
+    record_positions = []
+    for entry in entries:
+        record_positions.append(len(out))
+        out.extend(entry["meta"])
+
+    for position, entry in zip(record_positions, entries):
+        stem_offset = len(out)
+        struct.pack_into("<I", out, position + 24, stem_offset)
+        out.extend(encode_c_string(entry["stem"], encoding_type))
+
+    while len(out) & 3:
+        out.append(0)
+    data_start = len(out)
+
+    for position, entry in zip(record_positions, entries):
+        while len(out) & 3:
+            out.append(0)
+        data_offset = len(out)
+        out.extend(entry["stored"])
+        struct.pack_into("<I", out, position, data_offset)
+        struct.pack_into("<i", out, position + 4, len(entry["stored"]))
+
+    struct.pack_into("<i", out, 4, len(out) - data_start)
+    struct.pack_into("<I", out, 8, len(entries))
+    return bytes(out)
 
 
 def fingerprint(paths):
@@ -270,7 +284,7 @@ def main():
     parser.add_argument("source", type=Path, help="user-owned dvdroot_ps4/menu/nowloading.tpf.dcx")
     parser.add_argument("--images-dir", required=True, type=Path)
     parser.add_argument("--texconv", required=True, type=Path)
-    parser.add_argument("--out-dir", required=True, type=Path)
+    parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
 
     images = sorted([*args.images_dir.glob("loading_*.jpg"), *args.images_dir.glob("loading_*.jpeg")])
@@ -281,17 +295,16 @@ def main():
     if not args.texconv.is_file():
         raise SystemExit(f"Missing packaged texconv: {args.texconv}")
 
-    outputs = [args.out_dir / f"nowloading-custom-{i:02d}.tpf.dcx" for i in range(1, 7)]
     key = fingerprint([Path(__file__), args.source, *images])
-    stamp = args.out_dir / "loading-tpf.sha256"
-    if all(p.is_file() for p in outputs) and stamp.is_file() and stamp.read_text().strip() == key:
-        print("Loading screens: cached 6 custom classic TPF variants")
+    stamp = args.output.with_suffix(args.output.suffix + ".sha256")
+    if args.output.is_file() and stamp.is_file() and stamp.read_text().strip() == key:
+        print("Loading screens: cached extended classic TPF with 6 custom textures")
         return
 
     try:
         source = args.source.read_bytes()
         tpf, dcx_header = decompress_dcx(source)
-        records, _, _ = parse_tpf(tpf)
+        records, _, encoding_type = parse_tpf(tpf)
         targets = [r for r in records if r["stem"].lower() == TARGET_STEM.lower()]
         if not targets:
             names = ", ".join(r["stem"] for r in records)
@@ -306,22 +319,24 @@ def main():
             f"{target['stem']} {target['width']}x{target['height']} "
             f"format={target['format']} dxgi={target['dxgi']} "
             f"mips={target['mip_count']} flags={target['texture_flags']} "
-            f"stored={target['data_size']} bytes"
+            f"stored={target['data_size']} bytes; original records={len(records)}"
         )
-        args.out_dir.mkdir(parents=True, exist_ok=True)
+        custom = []
         with tempfile.TemporaryDirectory(prefix="bb-loading-") as tmp:
             tmp = Path(tmp)
-            for index, (image, output) in enumerate(zip(images, outputs), start=1):
+            for index, image in enumerate(images, start=1):
                 work = tmp / f"{index:02d}"
                 work.mkdir()
-                logical = make_texture(image, target, args.texconv, work)
-                rebuilt = rebuild_tpf(tpf, records, target["index"], logical)
-                output.write_bytes(compress_dcx(rebuilt, dcx_header))
+                custom.append(make_texture(image, target, args.texconv, work))
+        rebuilt = build_extended_tpf(tpf, records, target, custom, encoding_type)
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_bytes(compress_dcx(rebuilt, dcx_header))
     except (OSError, ValueError, struct.error, zlib.error) as error:
         raise SystemExit(f"Loading screens: TPF generation failed: {error}")
 
     stamp.write_text(key + "\n")
-    print("Loading screens: generated 6 custom classic TPF variants; original game files unchanged")
+    print("Loading screens: built one extended classic TPF with original resources + 6 custom textures; "
+          "original game files unchanged")
 
 
 if __name__ == "__main__":
