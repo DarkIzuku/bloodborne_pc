@@ -262,6 +262,7 @@ public:
 
 private:
     void PrepareRenderState(const GraphicsPipeline* pipeline);
+    void NotifyUiDraw(const GraphicsPipeline* pipeline);
     RenderState BeginRendering(const GraphicsPipeline* pipeline);
     RenderState BeginRenderingFull(const GraphicsPipeline* pipeline);
     /// bbport: a draw continuing the open render pass with the same inputs gets the same render

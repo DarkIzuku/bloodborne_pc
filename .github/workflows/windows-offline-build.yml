@@ -79,13 +79,14 @@ jobs:
         shell: msys2 {0}
         run: |
           set -e
-          ninja -C out/gpu pipeline-cache-blob-test pipeline-archive-test motion-history-test motion-shader-test image-overlap-test settings-test
+          ninja -C out/gpu pipeline-cache-blob-test pipeline-archive-test motion-history-test motion-shader-test image-overlap-test settings-test ui-composition-test
           out/gpu/pipeline-cache-blob-test.exe
           out/gpu/pipeline-archive-test.exe
           out/gpu/motion-history-test.exe
           out/gpu/motion-shader-test.exe
           out/gpu/image-overlap-test.exe
           out/gpu/settings-test.exe
+          out/gpu/ui-composition-test.exe
 
       - name: Verify preparation, patches, and mod safety
         shell: msys2 {0}

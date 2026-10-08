@@ -597,6 +597,26 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     }
 }
 
+void Rasterizer::NotifyUiDraw(const GraphicsPipeline* pipeline) {
+    if (!upscaler->Enabled()) return;
+    const auto& key = pipeline->GetGraphicsKey();
+    const auto vs_hash = pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash;
+    const auto& regs = Regs();
+    if (!UiComposition::ObserveDraw(key.mrt_mask, vs_hash, regs.depth_control.stencil_enable))
+        return;
+    auto color = cb_descs[0].first;
+    // A stencil-only pipeline does not resolve colour bindings. Reuse a previous
+    // colour only if it is still the engine's bound target, never another pass's.
+    if (key.mrt_mask == 0 && color &&
+        (!regs.color_buffers[0] || texture_cache.GetImage(color).info.guest_address !=
+                                      regs.color_buffers[0].Address())) {
+        color = {};
+    }
+    const auto& viewport = regs.viewports[0];
+    upscaler->OnDraw(vs_hash, color, db_desc.first,
+                     UiComposition::NativeViewport(viewport.xscale * 2, viewport.yscale * 2));
+}
+
 static std::pair<u32, u32> GetDrawOffsets(
     const AmdGpu::Regs& regs, const Shader::Info& info,
     const std::optional<Shader::Gcn::FetchShaderData>& fetch_shader) {
@@ -1474,12 +1494,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     motion_geometry = 0;
 
     PrepareRenderState(pipeline);
-    if (upscaler->Enabled() && std::popcount(pipeline->GetGraphicsKey().mrt_mask) == 1) {
-        const auto& viewport = Regs().viewports[0];
-        upscaler->OnDraw(pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash,
-                         cb_descs[0].first, db_desc.first,
-                         UiComposition::NativeViewport(viewport.xscale * 2, viewport.yscale * 2));
-    }
+    NotifyUiDraw(pipeline);
     const PreparedDraw* draw_prepared = bind_prepared;
     // bbport: vertex and index buffers are resolved while the helper binds textures (their
     // commands are recorded after BeginRendering, as before).
@@ -1703,12 +1718,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     motion_draw = false;
     motion_geometry = 0;
     PrepareRenderState(pipeline);
-    if (upscaler->Enabled() && std::popcount(pipeline->GetGraphicsKey().mrt_mask) == 1) {
-        const auto& viewport = Regs().viewports[0];
-        upscaler->OnDraw(pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash,
-                         cb_descs[0].first, db_desc.first,
-                         UiComposition::NativeViewport(viewport.xscale * 2, viewport.yscale * 2));
-    }
+    NotifyUiDraw(pipeline);
     if (!BindResources(pipeline)) {
         return;
     }

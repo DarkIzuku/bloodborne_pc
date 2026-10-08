@@ -2,6 +2,7 @@
 #pragma once
 
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 
@@ -27,6 +28,13 @@ inline bool NativeViewport(float width, float height) {
 constexpr bool MovieShader(uint64_t hash) {
     return hash == 0x34e8a281 || hash == 0x81d336ce || hash == 0x09957251 ||
            hash == 0x24042a9b || hash == 0xa400228b;
+}
+
+// Scaleform clip masks write stencil with no colour exports. Observe them before
+// the masked image so a late UI-depth preparation cannot erase the clip mask.
+constexpr bool ObserveDraw(uint32_t mrt_mask, uint64_t vs_hash, bool has_stencil) {
+    return std::popcount(mrt_mask) == 1 ||
+           (mrt_mask == 0 && has_stencil && MovieShader(vs_hash));
 }
 
 inline std::array<float, 2> Scale(uint32_t guest_width, uint32_t guest_height,
