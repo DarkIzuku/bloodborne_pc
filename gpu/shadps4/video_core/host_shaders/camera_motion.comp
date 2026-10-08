@@ -38,8 +38,10 @@ void main() {
     // Depth was rasterised through a shifted viewport. Reconstruct its unjittered
     // position, and keep jitter out of FSR's motion vectors (as for the object vectors).
     const vec2 scene_uv = uv - jitter / size;
-    // Upstream 0.3: Bloodborne view +y maps down the screen. This fixes vertical camera motion
-    // used by FSR/TAA (stairs smearing / blur).
+    // bbport: ndc +y down the screen (pixel rows). The projection's y scale carries the sign of
+    // the G-buffer pass's viewport y scale (CameraMotion::OnConstants): the viewport decides which
+    // way view +y goes. A fixed sign was right in some areas and wrong in others (0.2: y up, bad on
+    // the Cathedral Ward stairs and in the sewers; 0.3: y down, smearing when the camera turns).
     const vec2 ndc = vec2(scene_uv.x * 2.0 - 1.0, scene_uv.y * 2.0 - 1.0);
 
     // Clip z = zs * z + zo, w = z; depth = zs + zo / z (zo < 0, depth < zs in front).

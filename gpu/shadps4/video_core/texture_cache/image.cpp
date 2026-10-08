@@ -87,12 +87,14 @@ static vk::FormatFeatureFlags2 FormatFeatureFlags(const vk::ImageUsageFlags usag
 
 UniqueImage::~UniqueImage() {
     if (image) {
+        BbStats::vk_image_bytes.fetch_sub(size_bytes, std::memory_order_relaxed);
         vmaDestroyImage(allocator, image, allocation);
     }
 }
 
 void UniqueImage::Destroy() {
     if (image) {
+        BbStats::vk_image_bytes.fetch_sub(size_bytes, std::memory_order_relaxed);
         vmaDestroyImage(allocator, image, allocation);
         image = vk::Image{};
         allocation = {};
@@ -102,8 +104,9 @@ void UniqueImage::Destroy() {
 void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
     this->image_ci = image_ci;
     ASSERT(!image);
-    // Upstream 0.3: large textures get dedicated VMA allocations so evicted images do not
-    // leave mostly-empty shared blocks resident indefinitely. BB_VMA_DEDICATED_MB=0 disables it.
+    // bbport: images of BB_VMA_DEDICATED_MB (4) or more get memory of their own, given back to
+    // the driver when they are freed. In shared VMA blocks the texture collector's evictions left
+    // holes (~0.9 GB on an RX 7800 XT) that a block only returns once wholly empty.
     static const vk::DeviceSize dedicated_from = [] {
         const char* env = std::getenv("BB_VMA_DEDICATED_MB");
         return vk::DeviceSize(env ? std::strtoull(env, nullptr, 10) : 4) << 20;
@@ -133,6 +136,7 @@ void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
                vk::to_string(vk::Result{result}));
     image = vk::Image{unsafe_image};
     size_bytes = alloc_info.size;
+    BbStats::vk_image_bytes.fetch_add(size_bytes, std::memory_order_relaxed);
 }
 
 Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,

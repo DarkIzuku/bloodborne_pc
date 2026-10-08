@@ -173,6 +173,9 @@ bool WriteVector(const BlobType type, std::filesystem::path&& path_, std::vector
                     LOG_ERROR(Render, "Failed to add {} to the archive", path.string().c_str());
                 }
             } else {
+                // bbport: written under a temporary name and renamed into place, so a crash or a
+                // power loss mid-write leaves the old file or none, never a cut-short one that
+                // the next start reads as a damaged entry (issue #28).
                 using namespace Common::FS;
                 const auto bytes = std::span{reinterpret_cast<const u8*>(v.data()),
                                              v.size() * sizeof(T)};

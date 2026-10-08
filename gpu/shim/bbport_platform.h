@@ -9,7 +9,9 @@
 #include <cstdint>
 #ifndef _WIN32
 #include <pthread.h>
+#include <execinfo.h>
 #include <sys/resource.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 #endif
@@ -33,6 +35,8 @@ int ThreadCpuClock();
 std::uint64_t ReadThreadCpuClockNs(int clock);
 /// "module+0xoffset" for a code address (diagnostics).
 void DescribeAddress(const void* address, char* out, std::size_t size);
+std::size_t CaptureStack(void** frames, std::size_t count);
+bool ReadProcessMemory(const void* source, void* destination, std::size_t size);
 #else
 inline bool GetUsage(bool thread, Usage& out) {
     rusage usage{};
@@ -49,6 +53,15 @@ inline bool GetUsage(bool thread, Usage& out) {
 
 inline std::uint32_t CurrentThreadId() {
     return static_cast<std::uint32_t>(gettid());
+}
+
+inline std::size_t CaptureStack(void** frames, std::size_t count) {
+    return static_cast<std::size_t>(backtrace(frames, static_cast<int>(count)));
+}
+
+inline bool ReadProcessMemory(const void* source, void* destination, std::size_t size) {
+    iovec local{destination, size}, remote{const_cast<void*>(source), size};
+    return process_vm_readv(getpid(), &local, 1, &remote, 1, 0) == static_cast<ssize_t>(size);
 }
 
 /// Linux: the thread's clockid_t.

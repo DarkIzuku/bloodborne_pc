@@ -15,6 +15,13 @@
 
 namespace Serialization {
 
+/// bbport: a cache entry that cannot be used: shorter than what it claims to hold (a file cut
+/// short by a crash or a power loss, issue #28), or rejected by the driver while preloading. The
+/// pipeline cache drops the entry and compiles it again instead of stopping the game.
+struct CorruptData : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
 template <typename T>
 concept Container = requires(T t) {
     typename T::iterator;
@@ -56,7 +63,7 @@ struct Archive {
 
     void Require(size_t size) const {
         if (size > Remaining()) {
-            throw std::runtime_error("Truncated pipeline cache record");
+            throw CorruptData("Truncated pipeline cache record");
         }
     }
 
@@ -136,7 +143,7 @@ struct Reader {
         // All containers in the pipeline format store fixed-size scalar/struct elements.
         if (num_elements > ar.Remaining() / sizeof(typename std::decay_t<decltype(v)>::value_type) ||
             num_elements > v.max_size()) {
-            throw std::runtime_error("Invalid pipeline cache element count");
+            throw CorruptData("Invalid pipeline cache element count");
         }
         v.clear();
         for (size_t i = 0; i < num_elements; ++i) {

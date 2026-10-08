@@ -74,6 +74,7 @@ static int32_t wait_count(uint32_t id,int32_t need,uint32_t *timeout,int block) 
         Waiter **tail=&s->first;
         while (*tail) tail=&(*tail)->next;
         *tail=&w; ++s->active;
+        const uint64_t wait_start=runtime_wait_clock();
         uint64_t deadline=timeout ? now_ns()+(uint64_t)*timeout*1000 : 0;
         while (!w.done) {
 #ifdef _WIN32
@@ -93,6 +94,7 @@ static int32_t wait_count(uint32_t id,int32_t need,uint32_t *timeout,int block) 
                 *p=w.next; w.result=ERR(60); w.done=1; ++timed_out;
             } else if (e!=ETIMEDOUT) host_check(e);
         }
+        runtime_wait_note(2,runtime_wait_clock()-wait_start);
         result=w.result;
         if (!result) ++acquired;
         if (timeout) {

@@ -73,6 +73,15 @@ void DescribeAddress(const void* address, char* out, std::size_t size) {
     std::snprintf(out, size, "%p", address);
 }
 
+std::size_t CaptureStack(void** frames, std::size_t count) {
+    return CaptureStackBackTrace(0, static_cast<DWORD>(count), frames, nullptr);
+}
+
+bool ReadProcessMemory(const void* source, void* destination, std::size_t size) {
+    SIZE_T read = 0;
+    return ::ReadProcessMemory(GetCurrentProcess(), source, destination, size, &read) && read == size;
+}
+
 } // namespace BbPlatform
 
 namespace BbThreads {

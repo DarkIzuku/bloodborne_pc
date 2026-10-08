@@ -8,6 +8,7 @@ on:
       - seamless-dev
       - offline-performance-precache-buildcheck
       - upstream-0.3-core-port
+      - upstream-0.4-core-port
     paths:
       - "src/**"
       - "gpu/**"
@@ -78,12 +79,22 @@ jobs:
         shell: msys2 {0}
         run: |
           set -e
-          ninja -C out/gpu pipeline-cache-blob-test pipeline-archive-test motion-history-test motion-shader-test image-overlap-test
+          ninja -C out/gpu pipeline-cache-blob-test pipeline-archive-test motion-history-test motion-shader-test image-overlap-test settings-test
           out/gpu/pipeline-cache-blob-test.exe
           out/gpu/pipeline-archive-test.exe
           out/gpu/motion-history-test.exe
           out/gpu/motion-shader-test.exe
           out/gpu/image-overlap-test.exe
+          out/gpu/settings-test.exe
+
+      - name: Verify preparation, patches, and mod safety
+        shell: msys2 {0}
+        run: |
+          python -m unittest discover -s tests -p 'test_prepare.py'
+          python -m unittest discover -s tests -p 'test_patches.py'
+          python -m unittest discover -s tests -p 'test_game_check.py'
+          python -m unittest discover -s tests -p 'test_upscaler_assets.py'
+          python -m unittest discover -s tests -p 'test_fsr4cap_dll_info.py'
 
       - name: Fetch DLSS 310.9.1
         shell: msys2 {0}
@@ -145,7 +156,7 @@ jobs:
             while IFS= read -r dll; do [ -f "$dll" ] && cp -f "$dll" package/out/; done < <(copy_deps "$exe")
           done
           cat > package/README-FIRST.txt <<'EOF'
-          Bloodborne PC - Offline Stability v0.1
+          Bloodborne PC - Windows integration based on upstream 0.4
 
           1. Run BloodborneLauncher.exe.
           2. Select your own Bloodborne v1.09 game dump (folder containing eboot.bin and sce_sys).
@@ -162,7 +173,7 @@ jobs:
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: Bloodborne-PC-Offline-v0.1-${{ github.sha }}
+          name: Bloodborne-PC-Offline-v0.4-${{ github.sha }}
           path: package/
           compression-level: 6
           if-no-files-found: error

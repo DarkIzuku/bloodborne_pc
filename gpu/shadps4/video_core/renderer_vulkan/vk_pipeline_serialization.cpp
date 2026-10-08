@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <unordered_set>
 #include "common/serdes.h"
 #include "common/hash.h"
 #include <algorithm>
@@ -353,7 +354,7 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage, 
         const auto [result, compiled] = instance.GetDevice().createShaderModule(
             {.codeSize = spv.size() * sizeof(u32), .pCode = spv.data()});
         if (result != vk::Result::eSuccess) {
-            return false;
+            throw Serialization::CorruptData{"cached SPIR-V rejected by the driver"};
         }
         module = compiled;
     }
@@ -443,6 +444,7 @@ void PipelineCache::WarmUp() {
     }
 
     const auto* regs = sel.regs;
+    u32 damaged = 0;
     // Sequential by design: selection, programs, SRT walker allocation and archive reads are
     // shared. A worker pool needs isolated reconstruction state before it can be safe.
     for (const auto& name : names) {
@@ -461,12 +463,35 @@ void PipelineCache::WarmUp() {
                                     : LoadGraphicsPipeline(ar, version == 5);
             }
         } catch (const std::exception& error) {
+            ++damaged;
             LOG_WARNING(Render, "Skipping pipeline {}: {}", name, error.what());
         }
         std::scoped_lock lock{progress_mutex};
         loaded ? ++precache_progress.loaded : ++precache_progress.rejected;
     }
     sel = {.regs = regs};
+    if (damaged) {
+        // A failed reconstruction may have inserted earlier stages of the damaged record.
+        // 0.4 discards those too, while retaining the fork's preload progress reporting.
+        graphics_pipelines.clear();
+        compute_pipelines.clear();
+        std::unordered_set<VkShaderModule> modules;
+        for (const auto& [_, program] : program_cache) {
+            if (!program) continue;
+            for (const auto& permutation : program->modules) {
+                if (permutation.module) modules.insert(VkShaderModule(permutation.module));
+            }
+        }
+        for (const auto module : modules) instance.GetDevice().destroyShaderModule(vk::ShaderModule{module});
+        program_cache.clear();
+        database.Clear();
+        database.FinishPreload();
+        profile_data.resize(sizeof(profile));
+        std::memcpy(profile_data.data(), &profile, sizeof(profile));
+        database.Save(Storage::BlobType::ShaderProfile, "profile", std::move(profile_data));
+        std::scoped_lock lock{progress_mutex};
+        precache_progress.loaded = 0;
+    }
     const auto status = GetPrecacheProgress();
     LOG_INFO(Render, "Preloaded {} of {} pipelines ({} rejected)", status.loaded, status.total,
              status.rejected);
@@ -541,9 +566,11 @@ bool PersistentSrtInfo::Deserialize(Serialization::Archive& ar) {
     srt.Read(this, sizeof(*this));
 
     if (walker_func_size) {
-        ar.Require(walker_func_size);
-        walker_func = RegisterWalkerCode(ar.CurrPtr(), walker_func_size);
+        // bbport: the size is checked before the code is registered (it becomes executable):
+        // a cut-short file must not have bytes past its end run as the walker.
+        const auto code = ar.CurrPtr();
         ar.Advance(walker_func_size);
+        walker_func = RegisterWalkerCode(code, walker_func_size);
     }
 
     return true;

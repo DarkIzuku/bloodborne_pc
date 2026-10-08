@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <limits>
+#include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 
@@ -34,6 +35,9 @@ void Semaphore::Refresh() {
     do {
         this_tick = gpu_tick.load(std::memory_order_acquire);
         auto [counter_result, cntr] = instance.GetDevice().getSemaphoreCounterValue(*semaphore);
+        if (counter_result == vk::Result::eErrorDeviceLost) {
+            Breadcrumbs::ReportDeviceLost("reading the GPU progress");
+        }
         ASSERT_MSG(counter_result == vk::Result::eSuccess,
                    "Failed to get master semaphore value: {}", vk::to_string(counter_result));
         counter = cntr;
@@ -62,7 +66,16 @@ void Semaphore::Wait(u64 tick) {
         .pValues = &tick,
     };
 
-    while (instance.GetDevice().waitSemaphores(&wait_info, WAIT_TIMEOUT) != vk::Result::eSuccess) {
+    // bbport: a lost device ends the wait with a report instead of a silent endless loop.
+    while (true) {
+        const vk::Result result = instance.GetDevice().waitSemaphores(&wait_info, WAIT_TIMEOUT);
+        if (result == vk::Result::eSuccess) {
+            break;
+        }
+        if (result == vk::Result::eErrorDeviceLost) {
+            Breadcrumbs::ReportDeviceLost("waiting for a submission");
+            ASSERT_MSG(false, "Device lost while waiting for a submission");
+        }
     }
     Refresh();
 }

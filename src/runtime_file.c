@@ -12,6 +12,9 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#ifndef _WIN32
+#include <pthread.h>
+#endif
 #include <unistd.h>
 #include <sys/stat.h>
 #ifdef _WIN32
@@ -258,9 +261,9 @@ static int host_fd(int fd) {
     File *f=get(fd);
     return f ? f->host : -1;
 }
-/* Pages of the destination may be write-protected for GPU tracking: the kernel's copy then
- * fails with EFAULT instead of faulting to our handler. A user-mode write to each page first
- * goes through the handler, which unprotects it (and records the upcoming write). */
+/* The GPU side is told of the write first (runtime_memory_note_write: its tracking unprotects the
+ * range). Pages protected again meanwhile would make the kernel's copy fail with EFAULT instead
+ * of faulting to our handler: a user-mode write to each page first goes through the handler. */
 static void touch_for_write(void *buffer,uint64_t size) {
     if (!size) return;
     uintptr_t p=(uintptr_t)buffer & ~(uintptr_t)4095, end=(uintptr_t)buffer+size;
@@ -272,18 +275,22 @@ static void touch_for_write(void *buffer,uint64_t size) {
 static int64_t do_read(int fd,void *buffer,uint64_t size) {
     int h=host_fd(fd);
     if (h<0) return get(fd) ? -EISDIR : -EBADF;
+    runtime_memory_note_write((uintptr_t)buffer,size);
     touch_for_write(buffer,size);
     ssize_t n=read(h,buffer,size);
     if (n<0) { if (audio_trace()) printf("Audio trace: read(fd %d, %llu) failed, errno %d\n",fd,(unsigned long long)size,errno); return -errno; }
+    if (n>0) runtime_memory_note_write((uintptr_t)buffer,(uint64_t)n); /* and once the data is there */
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
     return n;
 }
 static int64_t do_pread(int fd,void *buffer,uint64_t size,int64_t offset) {
     int h=host_fd(fd);
     if (h<0) return get(fd) ? -EISDIR : -EBADF;
+    runtime_memory_note_write((uintptr_t)buffer,size);
     touch_for_write(buffer,size);
     ssize_t n=pread(h,buffer,size,offset);
     if (n<0) { if (audio_trace()) printf("Audio trace: pread(fd %d, %llu @%lld) failed, errno %d\n",fd,(unsigned long long)size,(long long)offset,errno); return -errno; }
+    if (n>0) runtime_memory_note_write((uintptr_t)buffer,(uint64_t)n); /* and once the data is there */
     __atomic_add_fetch(&reads,1,__ATOMIC_RELAXED); __atomic_add_fetch(&bytes_read,(uint64_t)n,__ATOMIC_RELAXED);
     return n;
 }
