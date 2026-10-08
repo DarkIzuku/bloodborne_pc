@@ -272,7 +272,6 @@
                                                     <ComboBoxItem Content="30" />
                                                     <ComboBoxItem Content="60" />
                                                     <ComboBoxItem Content="90" />
-                                                    <ComboBoxItem Content="Unlimited" />
                                                 </ComboBox>
                                             </StackPanel>
                                         </Border>
@@ -396,7 +395,6 @@
                                         <ComboBoxItem Content="30 FPS" Tag="30" />
                                         <ComboBoxItem Content="60 FPS" Tag="60" />
                                         <ComboBoxItem Content="90 FPS" Tag="90" />
-                                        <ComboBoxItem Content="Unlimited" Tag="uncap" />
                                     </ComboBox>
                                     <TextBlock TextWrapping="Wrap" Text="Choose a frame rate limit for your next session." Foreground="#AFA69A" Margin="0,8,0,22" />
                                     <TextBlock Style="{StaticResource SectionTitle}" Text="MODEL DETAIL" />

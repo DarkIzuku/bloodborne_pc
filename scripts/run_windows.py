@@ -86,6 +86,20 @@ def settings_value(config, key):
     return None
 
 
+def configure_frame_rate(env):
+    """Windows supports the tested fixed-timestep presets, including old config migration.
+
+    Explicit limits also override inherited BB_VBLANK_HZ=0 / BB_FPS_LIMIT=0 so a
+    legacy uncapped launch cannot saturate the desktop during menus or loading.
+    """
+    fps = env.get('BB_FPS', '60')
+    if fps not in ('30', '60', '90'):
+        print(f'Unsupported Windows FPS preset {fps!r}; using 60 FPS.', flush=True)
+        fps = '60'
+    env.update(BB_FPS=fps, BB_FPS_LIMIT=fps, BB_VBLANK_HZ='90' if fps == '90' else '60')
+    return fps
+
+
 def main():
     arguments = sys.argv[1:]
     game = os.environ.get('BB_GAME_DIR')
@@ -124,7 +138,7 @@ def main():
         if os.environ.get('BB_AUTO_RENDER_RES') == '1':
             for key in ('BB_RENDER_RES', 'BB_OUTPUT_RES', 'BB_AUTO_RENDER_RES'):
                 os.environ.pop(key, None)
-        fps = os.environ.get('BB_FPS', 'uncap')
+        fps = configure_frame_rate(os.environ)
         scaled_render = scaled_output = None
         if not os.environ.get('BB_RENDER_RES'):
             sizes = run([PYTHON, SCRIPTS / 'patches.py', '--print-scaled', '--settings', config], capture=True, check=False)
@@ -152,7 +166,6 @@ def main():
              '--output-res', os.environ.get('BB_OUTPUT_RES', ''),
              '--patches-dir', os.environ.get('BB_PATCHES_DIR', data / 'patches'),
              '--patches-config', os.environ.get('BB_PATCHES_CONFIG', data / 'patches.json')])
-        os.environ.setdefault('BB_VBLANK_HZ', {'uncap': '0', '90': '90'}.get(fps, '60'))
         probe = ROOT / os.environ.get('BB_PROBE', out / 'bb-probe.exe')
         command = [probe, out / 'boot-linked.bin', '--content-profile', out / 'content.bin',
                    '--patches', out / 'patches.bin', '--app0', merged,

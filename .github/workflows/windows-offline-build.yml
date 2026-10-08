@@ -94,6 +94,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_prepare.py'
           python -m unittest discover -s tests -p 'test_patches.py'
           python -m unittest discover -s tests -p 'test_game_check.py'
+          python -m unittest discover -s tests -p 'test_windows_frame_rate.py'
           python -m unittest discover -s tests -p 'test_upscaler_assets.py'
           python -m unittest discover -s tests -p 'test_fsr4cap_dll_info.py'
 
@@ -116,6 +117,10 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
+
+      - name: Verify launcher settings and lifecycle
+        shell: pwsh
+        run: ./launcher-windows/BloodborneLauncher/Verify-Launcher.ps1 -PreviewDirectory launcher-previews
 
       - name: Publish launcher
         shell: pwsh
@@ -161,7 +166,7 @@ jobs:
 
           1. Run BloodborneLauncher.exe.
           2. Select your own Bloodborne v1.09 game dump (folder containing eboot.bin and sce_sys).
-          3. Configure resolution, FPS and upscaler.
+          3. Configure resolution, FPS (30, 60 or 90) and upscaler. Unlimited FPS is retired.
           4. Press PLAY BLOODBORNE.
 
           The launcher uses artwork from your own game sce_sys folder when available.

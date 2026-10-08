@@ -86,7 +86,11 @@ public partial class MainWindow : Window
             }
         }
         catch { state = new(); }
+        // Migrate retired or malformed frame-rate selections before displaying or launching.
+        state.Fps = NormalizeFps(state.Fps);
     }
+
+    static string NormalizeFps(string? value) => value is "30" or "60" or "90" ? value : "60";
 
     void ApplyStateToUi()
     {
@@ -138,7 +142,7 @@ public partial class MainWindow : Window
         state.PresentMode = ComboTag(PresentCombo);
         state.Upscaler = ComboTag(UpscalerCombo, "fsr3");
         state.Preset = ComboTag(PresetCombo, "1");
-        state.Fps = ComboTag(FpsCombo, "60");
+        state.Fps = NormalizeFps(ComboTag(FpsCombo, "60"));
         state.Language = ComboTag(LanguageCombo, "1");
         state.LiveResolution = ComboTag(LiveResolutionCombo, "0");
         state.ModelLod = ComboTag(ModelLodCombo, "0");
@@ -246,7 +250,7 @@ public partial class MainWindow : Window
         Fsr4Status.Foreground = (fsr411 || fsr4) ? Green() : Muted();
 
         DetectGpu();
-        FooterFps.Text = $"   |   {(state.Fps == "uncap" ? "Unlimited" : state.Fps + " FPS")}";
+        FooterFps.Text = $"   |   {state.Fps} FPS";
     }
 
     static System.Windows.Media.Brush Green() => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(117, 207, 121));
@@ -370,6 +374,8 @@ public partial class MainWindow : Window
             psi.Environment["BB_CONFIG"] = Path.Combine(root, "bbport.ini");
             psi.Environment["BB_GAME_DIR"] = state.GamePath;
             psi.Environment["BB_FPS"] = state.Fps;
+            psi.Environment["BB_FPS_LIMIT"] = state.Fps;
+            psi.Environment["BB_VBLANK_HZ"] = state.Fps == "90" ? "90" : "60";
             psi.Environment["BB_LANGUAGE"] = state.Language;
             psi.Environment["BB_GAMEPAD_INDEX"] = state.GamepadIndex.ToString();
             psi.Environment["BB_MODS_ENABLED"] = state.ModsEnabled ? "1" : "0";
@@ -480,9 +486,9 @@ public partial class MainWindow : Window
     void QuickFps_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (syncing || QuickFps.SelectedItem is not ComboBoxItem item) return;
-        string v = item.Content?.ToString() == "Unlimited" ? "uncap" : item.Content?.ToString() ?? "60";
+        string v = NormalizeFps(item.Content?.ToString());
         SetComboTag(FpsCombo, v);
-        FooterFps.Text = $"   |   {(v == "uncap" ? "Unlimited" : v + " FPS")}";
+        FooterFps.Text = $"   |   {v} FPS";
     }
 
     void SetQuickUpscaler(string value)
@@ -491,7 +497,7 @@ public partial class MainWindow : Window
     }
     void SetQuickFps(string value)
     {
-        QuickFps.SelectedIndex = value switch { "30" => 0, "60" => 1, "90" => 2, _ => 3 };
+        QuickFps.SelectedIndex = value switch { "30" => 0, "90" => 2, _ => 1 };
     }
 
     static string ComboTag(ComboBox box, string fallback = "") =>

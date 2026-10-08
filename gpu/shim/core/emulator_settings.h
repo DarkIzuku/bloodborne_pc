@@ -36,7 +36,12 @@ public:
     u32 GetVblankFrequency() {
         static const u32 value = [] {
             const long hz = Number("BB_VBLANK_HZ", 60);
+#ifdef _WIN32
+            // Direct runtime launches must be safe too, even with legacy uncapped env vars.
+            return hz == 30 || hz == 60 || hz == 90 ? u32(hz) : 60u;
+#else
             return hz > 0 ? u32(hz) : 480u;
+#endif
         }();
         return value;
     }
@@ -44,13 +49,25 @@ public:
     bool IsUncappedVblank() {
         static const bool value = [] {
             const long hz = Number("BB_VBLANK_HZ", 60);
+#ifdef _WIN32
+            (void)hz;
+            return false;
+#else
             return hz <= 0 || hz > 120;
+#endif
         }();
         return value;
     }
     /// Frames per second the present thread lets through; 0 = no limit (BB_FPS_LIMIT).
     u32 GetFrameLimit() {
-        static const u32 value = u32(std::max(0L, Number("BB_FPS_LIMIT", 0)));
+        static const u32 value = [] {
+#ifdef _WIN32
+            const long fps = Number("BB_FPS_LIMIT", GetInstance()->GetVblankFrequency());
+            return fps == 30 || fps == 60 || fps == 90 ? u32(fps) : 60u;
+#else
+            return u32(std::max(0L, Number("BB_FPS_LIMIT", 0)));
+#endif
+        }();
         return value;
     }
     bool IsCopyGpuBuffers() { static const auto value = Flag("BB_COPY_GPU_BUFFERS", false); return value; }

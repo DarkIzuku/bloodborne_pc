@@ -36,10 +36,21 @@ CI builds the Windows runtime with MSYS2 CLANG64, publishes the .NET 8 WPF launc
 its existing runtimes/assets. It runs cache, motion, image-overlap and settings regressions,
 plus preparation, patch, version-detection and upscaler-asset Python tests.
 
-Compiling successfully does not establish visual correctness. The item-card loading screen
-must be observed over repeated loads with temporal upscaling both enabled and disabled. The
-0.4 notes identify a possible relation between the constant RAM race and flickering glyphs,
-but explicitly say that relation is unverified. Do not describe it as fixed before testing.
+The loading-card correction preserves Scaleform stencil-only mask draws when UI composition
+is redirected to native output resolution. Previously those zero-color-attachment draws did
+not enter the UI phase; moving the subsequent icon draw cleared the guest mask. Captured
+draw traces and repeated DLSS Quality 2560x1440 loads reproduced the missing icon before
+the fix and visible item images after it. The user independently confirmed the correction.
+The UI composition regression covers the observed clip shaders and rejects scene shadows.
+
+Windows keeps the 0.3 cursor behavior and removes Unlimited FPS. The previous diagnostic
+runs used uncapped presentation, where the user observed approximately 2000 FPS in the menu
+and desktop freezes. The 60 FPS test completed without that problem. The launcher migrates
+retired selections to 60; both run_windows.py and direct runtime launches enforce supported
+30/60/90 caps, overriding legacy unbounded settings. Linux's rate options are unchanged.
+Do not attribute the freeze to recording threads or queue changes: those diagnostic changes
+were inconclusive and are not included. Original saves matched their hashes after testing.
+Full preset/resolution and long-play validation remains pending.
 
 ## Requested bbhost features
 

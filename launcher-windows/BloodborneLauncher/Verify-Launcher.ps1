@@ -125,7 +125,7 @@ static class Program
         var envPath=Path.Combine(root,"launch-env.txt");
         for(int i=0;i<100 && !File.Exists(envPath);i++) Thread.Sleep(50);
         string env=File.ReadAllText(envPath);
-        foreach(var expected in new[]{"BB_PREBUILT=1","BB_DATA_DIR="+root.TrimEnd(Path.DirectorySeparatorChar),"BB_CONFIG="+Path.Combine(root.TrimEnd(Path.DirectorySeparatorChar),"bbport.ini"),"BB_GAME_DIR="+game,"BB_FPS=90","BB_LANGUAGE=3","BB_GAMEPAD_INDEX=2","BB_MODS_ENABLED=0","BB_PRESENT_MODE=FifoRelaxed","BB_DLSS_LOG=1","BB_FRAME_STATS=1","BB_AUDIO_STATS=1","BB_FSR4_PROFILE=1"}) Check(env.Split("\r\n").Contains(expected),"Launch environment "+expected);
+        foreach(var expected in new[]{"BB_PREBUILT=1","BB_DATA_DIR="+root.TrimEnd(Path.DirectorySeparatorChar),"BB_CONFIG="+Path.Combine(root.TrimEnd(Path.DirectorySeparatorChar),"bbport.ini"),"BB_GAME_DIR="+game,"BB_FPS=90","BB_FPS_LIMIT=90","BB_VBLANK_HZ=90","BB_LANGUAGE=3","BB_GAMEPAD_INDEX=2","BB_MODS_ENABLED=0","BB_PRESENT_MODE=FifoRelaxed","BB_DLSS_LOG=1","BB_FRAME_STATS=1","BB_AUDIO_STATS=1","BB_FSR4_PROFILE=1"}) Check(env.Split("\r\n").Contains(expected),"Launch environment "+expected);
         Check(File.ReadAllText(Path.Combine(root,"launch-args.txt")).Contains("--game-dir \""+game+"\""),"Launch path quoting");
         Render(Path.Combine(output,"launcher-play.png"));
         foreach(var page in new[]{"General","Graphics","Performance","Controller","Mods","Advanced"}) {
@@ -163,6 +163,17 @@ static class Program
         Call("LoadState"); Call("ApplyStateToUi");
         Check(Tag("UpscalerCombo")=="fsr411" && Tag("FpsCombo")=="90" && Tag("PresetCombo")=="3","Settings reload");
         Check(Get<ComboBox>("QuickUpscaler").SelectedIndex==1 && Get<ComboBox>("QuickFps").SelectedIndex==2,"Quick settings reload");
+        Check(Get<ComboBox>("FpsCombo").Items.Count==3 && Get<ComboBox>("QuickFps").Items.Count==3,"Only supported FPS presets");
+        foreach(string legacy in new[]{"uncap","Unlimited","0","480","bad"}) {
+            string saved=File.ReadAllText(Path.Combine(root,"launcher-settings.json"));
+            File.WriteAllText(Path.Combine(root,"launcher-settings.json"),saved.Replace("\"Fps\": \"90\"","\"Fps\": \""+legacy+"\""));
+            Call("LoadState"); Call("ApplyStateToUi");
+            Check(Tag("FpsCombo")=="60" && Get<ComboBox>("QuickFps").SelectedIndex==1,"Legacy FPS fallback "+legacy);
+            Call("SaveSettings");
+            using(var migrated=JsonDocument.Parse(File.ReadAllText(Path.Combine(root,"launcher-settings.json"))))
+                Check(migrated.RootElement.GetProperty("Fps").GetString()=="60","Persist FPS migration "+legacy);
+            File.WriteAllText(Path.Combine(root,"launcher-settings.json"),saved);
+        }
         Console.WriteLine($"PASS: {assertions} assertions; settings, navigation, all quick options, launch environment and artwork.");
         window.Close(); app.Shutdown();
     }
