@@ -62,10 +62,6 @@ public:
         const Target* target = Find(width, height);
         return target && target->written ? vk::Image(target->image) : vk::Image{};
     }
-    [[nodiscard]] vk::Image Image(u32 width, u32 height) const noexcept {
-        return written && width == image_width && height == image_height
-            ? vk::Image(image) : vk::Image{};
-    }
 
 private:
     /// bbport: a motion image per render-target size. Scenes with G-buffer passes at two sizes
