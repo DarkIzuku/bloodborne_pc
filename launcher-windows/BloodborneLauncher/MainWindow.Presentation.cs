@@ -29,8 +29,7 @@ public partial class MainWindow
         SizeChanged += (_, _) =>
         {
             QuickSettingsGrid.Columns = ActualWidth < 1200 ? 3 : 5;
-            SidebarArt.Height = ActualHeight < 800 ? 34 : 170;
-            SidebarOrnament.Visibility = ActualHeight < 800 ? Visibility.Collapsed : Visibility.Visible;
+            SidebarArt.Height = ActualHeight < 800 ? 54 : 100;
         };
         StateChanged += (_, _) => MaximizeButton.Content = WindowState == WindowState.Maximized ? "\uE923" : "\uE922";
     }

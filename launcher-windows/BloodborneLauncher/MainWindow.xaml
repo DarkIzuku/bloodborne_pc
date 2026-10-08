@@ -103,12 +103,12 @@
                                 </Button>
                             </StackPanel>
                         </ScrollViewer>
-                        <Grid x:Name="SidebarArt" Grid.Row="1" Height="170" Margin="20,16,20,22">
-                            <Path x:Name="SidebarOrnament" Data="M50,0 L50,124 M50,13 L33,37 24,78 43,57 50,46 57,57 76,78 67,37 Z M50,78 L39,97 50,117 61,97 Z" Stroke="#776451" StrokeThickness="1.2" Width="76" MaxHeight="140" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity=".32" />
-                            <StackPanel VerticalAlignment="Bottom">
-                                <TextBlock Text="NATIVE WINDOWS RUNTIME" FontSize="9" Foreground="#9A8B77" HorizontalAlignment="Center" />
-                                <TextBlock Text="OFFLINE BUILD" FontFamily="Georgia" FontSize="11" Foreground="#C3AF93" HorizontalAlignment="Center" Margin="0,7,0,0" />
-                            </StackPanel>
+                        <Grid x:Name="SidebarArt" Grid.Row="1" Height="100" Margin="20,16,20,22">
+                            <Rectangle Width="174" Height="54" VerticalAlignment="Center" IsHitTestVisible="False" RenderOptions.BitmapScalingMode="HighQuality" AutomationProperties.Name="Bloodborne logo">
+                                <Rectangle.Fill>
+                                    <ImageBrush ImageSource="Assets/bloodborne-logo.png" Viewbox="0,0.06,1,0.76" Stretch="Uniform" />
+                                </Rectangle.Fill>
+                            </Rectangle>
                         </Grid>
                     </Grid>
                 </Border>
