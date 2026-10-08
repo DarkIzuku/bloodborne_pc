@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <magic_enum/magic_enum.hpp>
 #include "bbport_copy.h"
+#include "bbport_platform.h"
 #include "bbport_toggles.h"
 #include "bbport_sections.h"
 #include "bbport_free_check.h"
@@ -29,7 +30,9 @@
 #include "video_core/texture_cache/texture_cache.h"
 
 #include <mutex>
+#ifndef _WIN32
 #include <pthread.h>
+#endif
 #include <x86intrin.h>
 #include <vk_mem_alloc.h>
 
@@ -591,7 +594,11 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
     BbStats::readbacks.fetch_add(1, std::memory_order_relaxed);
     std::array<char, 16> requester{};
     if (Readbacks()) {
+#ifdef _WIN32
+        std::snprintf(requester.data(), requester.size(), "tid:%u", BbPlatform::CurrentThreadId());
+#else
         pthread_getname_np(pthread_self(), requester.data(), requester.size());
+#endif
     }
     const auto flush_request = [this, device_addr, size, is_write, requester] {
         readback_requester = requester.data();

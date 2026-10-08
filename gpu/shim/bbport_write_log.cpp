@@ -110,12 +110,6 @@ void DumpRange(std::uint64_t address, std::uint64_t size) {
 // Linux: a ucontext_t from the SIGSEGV handler; Windows: the vectored handler's EXCEPTION_POINTERS.
 extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
     using namespace BbWriteLog;
-    const auto* uc = static_cast<const ucontext_t*>(ucontext);
-    const auto* g = uc->uc_mcontext.gregs;
-    BbFreeCheck::DumpAtFault(std::uint64_t(g[REG_RAX]), std::uint64_t(g[REG_R14]));
-    if (Mode() == 0) {
-        return;
-    }
 #ifdef _WIN32
     const CONTEXT* c = static_cast<const EXCEPTION_POINTERS*>(ucontext)->ContextRecord;
     const std::uint64_t regs[] = {c->Rax, c->Rbx, c->Rcx, c->Rdx, c->Rsi, c->Rdi, c->R14, c->R15};
@@ -127,6 +121,10 @@ extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
                                   std::uint64_t(g[REG_RSI]), std::uint64_t(g[REG_RDI]),
                                   std::uint64_t(g[REG_R14]), std::uint64_t(g[REG_R15])};
 #endif
+    BbFreeCheck::DumpAtFault(regs[0], regs[6]);
+    if (Mode() == 0) {
+        return;
+    }
     const char* names[] = {"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r14", "r15"};
     for (int i = 0; i < 8; ++i) {
         std::fprintf(stderr, "Write log: %s=%#llx\n", names[i], (unsigned long long)regs[i]);

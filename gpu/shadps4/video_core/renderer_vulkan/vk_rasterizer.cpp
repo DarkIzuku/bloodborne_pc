@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#ifndef _WIN32
 #include <dlfcn.h>
+#endif
+#include "bbport_platform.h"
 #include <map>
 #include <unordered_set>
 #include <xxhash.h>
@@ -1310,12 +1313,16 @@ void Rasterizer::PrintPipeStats() {
         std::printf("\n  stage B tasks (us per frame-second, count/s):");
         static std::array<u64, TaskKinds> last_task_cycles{}, last_task_counts{};
         for (std::size_t k = 0; k < TaskKinds && task_kinds[k]; ++k) {
+            char name[96];
+#ifdef _WIN32
+            BbPlatform::DescribeAddress(task_kinds[k], name, sizeof(name));
+#else
             Dl_info info{};
             dladdr(task_kinds[k], &info);
-            char name[32];
             std::snprintf(name, sizeof(name), "+0x%llx",
                           (unsigned long long)(reinterpret_cast<u64>(task_kinds[k]) -
                                                reinterpret_cast<u64>(info.dli_fbase)));
+#endif
             const u64 c = task_cycles[k], n = task_counts[k];
             std::printf(" [%s %.0f us/s %.0f/s]", name,
                         1e6 * double(c - last_task_cycles[k]) / tsc_hz / seconds,
