@@ -1,4 +1,4 @@
-name: Windows Offline Build
+name: Windows Build
 # buildcheck-trigger: runtime-recovery-stub
 
 on:
@@ -60,6 +60,10 @@ jobs:
             mingw-w64-clang-x86_64-zydis
             mingw-w64-clang-x86_64-robin-map
             mingw-w64-clang-x86_64-ffmpeg
+            mingw-w64-clang-x86_64-protobuf
+            mingw-w64-clang-x86_64-nlohmann-json
+            mingw-w64-clang-x86_64-openssl
+            mingw-w64-clang-x86_64-miniupnpc
 
       - name: Build bbport runtime
         shell: msys2 {0}
@@ -100,6 +104,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_game_check.py'
           python -m unittest discover -s tests -p 'test_windows_frame_rate.py'
           python -m unittest discover -s tests -p 'test_engine_assets.py'
+          python -m unittest discover -s tests -p 'test_online.py'
           python -m unittest discover -s tests -p 'test_upscaler_assets.py'
           python -m unittest discover -s tests -p 'test_fsr4cap_dll_info.py'
 
@@ -176,7 +181,10 @@ jobs:
           4. Press PLAY BLOODBORNE.
 
           The launcher uses artwork from your own game sce_sys folder when available.
-          Multiplayer is intentionally disabled/not implemented in this build.
+          Online is optional. In ONLINE, enter your own shadNet host, TCP port and WebAPI
+          URL, sign in with the account created on that server's website, and save.
+          The game host override is generated automatically. No server is configured by default.
+          Multiplayer between two clients requires separate validation.
 
           FSR 4.1.1 requires its separate asset set; this package includes FSR 4 v07,
           FSR 3.1 and DLSS Super Resolution 310.9.1.
@@ -185,7 +193,7 @@ jobs:
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: Bloodborne-PC-Offline-v0.4-${{ github.sha }}
+          name: Bloodborne-PC-v0.4-${{ github.sha }}
           path: package/
           compression-level: 6
           if-no-files-found: error
