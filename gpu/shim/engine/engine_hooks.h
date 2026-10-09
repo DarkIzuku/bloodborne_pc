@@ -18,6 +18,7 @@ bool Prepare(Hook& hook, std::uint8_t* image, std::size_t size, std::size_t offs
              std::span<const std::uint8_t> expected, Callback callback);
 void Discard(Hook& hook);
 void Commit(std::span<Hook> hooks);
+bool WriteCode(void* address, const void* bytes, std::size_t size);
 
 // bloodborne_pc already rewrites guest TLS to the Win32 TEB; it does not need bbhost's
 // FS-switching thunk. Clang bridges the guest SysV ABI and the host ABI at this call site.

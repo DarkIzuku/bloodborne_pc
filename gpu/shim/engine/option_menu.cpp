@@ -5,6 +5,12 @@
 #include "engine_hooks.h"
 #include "menu_memory.h"
 #include "graphics.h"
+#include "../input/bindings.h"
+extern bool debug_menu_active();
+extern std::uint32_t menu_confirm_button();
+extern std::uint32_t menu_back_button();
+extern std::uint32_t input_delivered_buttons();
+#include <chrono>
 #include "bbport_platform.h"
 #include "bbport_settings.h"
 #include <algorithm>
@@ -234,6 +240,287 @@ void log_rows(const char* name, void* dialog, int built, int slots) {
              took != built || took > slots ? "  <- not every row will draw" : "");
 }
 
+constexpr std::uint64_t kChoiceAppend=0x1f2c200;
+void redraw(std::uint8_t* list) { hle_call_guest<std::int64_t>(guest_fn(kListRedraw),list); }
+void add_text_row(void* dialog, std::uint8_t* value, std::uint32_t id, const char16_t* label, const char16_t* help,
+                  const char16_t* text) {
+    Captions c(id);
+    std::memcpy(&c.buf[0x00], &label, sizeof(label));
+    std::memcpy(&c.buf[0x40], &help, sizeof(help));
+    alignas(16) std::uint8_t list[0x100]{};
+    alignas(16) std::uint8_t entry[0x48];
+    make_entry(entry, 0, text);
+    hle_call_guest<std::int64_t>(guest_fn(kChoiceAppend), &list, &entry);
+    free_entries(entry, 1);
+    *value = 0;
+    std::uint8_t def = 0;  // its only entry; the Key Bindings screen has no Defaults row
+    hle_call_guest<std::int64_t>(guest_fn(kAddChoiceRow), dialog, &c.buf[0], value, &list, &def);
+    free_entries(list, 1);
+}
+
+
+constexpr std::uint64_t kListVTable=0x5799fb0;
+
+constexpr std::uint32_t kKeysPageRow=119000,kKeysFirstRow=119001;
+int g_keys_page = 0;  // kept across opens, as DS3 keeps its tab
+// Row 0 is the page, rows 1..7 the page's actions: the arrays below are
+// indexed by row, and an action row r is action page * 7 + (r - 1).
+constexpr int kKeysRows = 1 + kBindPerPage;
+std::uint8_t g_keys_value[kKeysRows];
+char16_t g_keys_label[kKeysRows][48];
+char16_t g_keys_help[kKeysRows][160];
+char16_t g_keys_text[kKeysRows][64];
+struct KeysScreen {
+    std::uint8_t* dialog = nullptr;
+    std::uint8_t* rows = nullptr;          // the dialog's own list
+    std::uint8_t* widget[kKeysRows] = {};  // each row's choice widget
+    int page = -1;                         // the page the rows show
+    std::uint32_t pad_was = 0;             // for Circle's and the arrows' edges
+};
+KeysScreen g_keys;
+// A clear made on the menu thread, for the poll to save on the window thread
+// with every other settings write.
+std::atomic<bool> g_keys_save{false};
+
+// ASCII into a row's UTF-16 buffer; the port's strings and SDL's key names
+// are all ASCII.
+template <std::size_t N>
+void to_utf16(char16_t (&out)[N], const char* s) {
+    std::size_t i = 0;
+    for (; s && s[i] && i + 1 < N; ++i) out[i] = static_cast<char16_t>(static_cast<unsigned char>(s[i]));
+    out[i] = 0;
+}
+
+// The page names, as the tabs read. Plain ASCII: the line help and values
+// are drawn as HTML text, where an ampersand is not a character.
+const char* const kKeyPageNames[kBindPages] = {"Movement", "Combat", "Items and Gestures", "Camera and Menus",
+                                               "Other"};
+
+// The actions listed: the Debug Menu key only when the menu is there (the
+// Debug Menu plugin, engine/debug_menu.h); it is the last.
+static_assert(kBindDebugMenu == kBindCount - 1, "the Debug Menu key is the last action");
+int keys_listed() { return debug_menu_active() ? kBindCount : kBindDebugMenu; }
+
+// The row's action; keys_listed() or more for a row the last, short page
+// leaves blank, which shows nothing and takes no capture.
+int keys_action(int row) { return g_keys.page * kBindPerPage + row - 1; }
+bool keys_row_bound(int row) { return row > 0 && keys_action(row) < keys_listed(); }
+
+// Restore Defaults: the row right after the last action, on the last page.
+// The section has no room for the game's own Defaults row (its eight rows fill
+// the space above the key guide), and a key binding reset is DS3's too. It
+// asks twice - the first press says what the second will do - so a stray
+// Enter cannot wipe a set of bindings. Moving off it, or four seconds, and
+// it asks again from the start.
+bool keys_row_reset(int row) { return row > 0 && keys_action(row) == keys_listed(); }
+enum class KeysReset { Idle, Armed, Done };
+KeysReset g_keys_reset = KeysReset::Idle;
+std::chrono::steady_clock::time_point g_keys_reset_at;
+
+void keys_fill_reset_text(int row) {
+    // Short: the value column cut "Press again to restore" to "Press again to".
+    to_utf16(g_keys_text[row], g_keys_reset == KeysReset::Armed  ? "Press again"
+                               : g_keys_reset == KeysReset::Done ? "Restored"
+                                                                 : "All actions");
+}
+
+void keys_fill_value(int row) {
+    if (keys_row_reset(row)) {
+        keys_fill_reset_text(row);
+        return;
+    }
+    if (!keys_row_bound(row)) {
+        g_keys_text[row][0] = 0;
+        return;
+    }
+    char d[64];
+    host_binding_describe(keys_action(row), d, sizeof(d));
+    to_utf16(g_keys_text[row], d);
+}
+
+void keys_fill(int page) {
+    g_keys.page = (page % kBindPages + kBindPages) % kBindPages;
+    g_keys_page = g_keys.page;
+    to_utf16(g_keys_label[0], "Page");
+    to_utf16(g_keys_help[0], "Left and right change the group of actions shown.");
+    to_utf16(g_keys_text[0], kKeyPageNames[g_keys.page]);
+    for (int r = 1; r < kKeysRows; ++r) {
+        if (keys_row_reset(r)) {
+            to_utf16(g_keys_label[r], "Restore Defaults");
+            to_utf16(g_keys_help[r], "Every action back to its default key and mouse button. Enter or click, then again "
+                                     "to confirm.");
+            keys_fill_reset_text(r);
+            continue;
+        }
+        if (!keys_row_bound(r)) {
+            g_keys_label[r][0] = g_keys_help[r][0] = g_keys_text[r][0] = 0;
+            continue;
+        }
+        const BindingInfo& b = host_binding_info(keys_action(r));
+        to_utf16(g_keys_label[r], b.label);
+        char help[160];
+        std::snprintf(help, sizeof(help), "%s Enter or click to rebind, Delete to clear.", b.help);
+        to_utf16(g_keys_help[r], help);
+        keys_fill_value(r);
+    }
+}
+
+
+
+// Whether the remembered objects are still this screen's. The dialog is freed
+// when it closes and its memory reused, so identity is checked where only the
+// port could have put it: every action row writes through one of its bytes.
+bool keys_alive() {
+    if (!g_keys.dialog || !g_keys.rows) return false;
+    std::uint64_t vt = 0;
+    std::memcpy(&vt, g_keys.rows, sizeof(vt));
+    if (vt != guest(kListVTable) + 0x10 && vt != guest(kListVTable)) return false;
+    for (int r = 0; r < kKeysRows; ++r) {
+        if (!g_keys.widget[r]) return false;
+        std::uint64_t v = 0;
+        std::memcpy(&v, g_keys.widget[r] + kChoiceValue, sizeof(v));
+        if (v != reinterpret_cast<std::uint64_t>(&g_keys_value[r])) return false;
+    }
+    return true;
+}
+
+GUEST_ABI void pc_keys_handler(void* dialog, void* params) {
+    host_log("pc-options: PCKeys opened, dialog=%p params=%p", dialog, params);
+    alignas(16) std::uint8_t scratch[0x100]{};
+    hle_call_guest<std::int64_t>(guest_fn(kScratchInit), &scratch);
+    g_keys = KeysScreen{};
+    // The Circle that opened the screen may still be down when the page row
+    // first has focus; it is not a press on that row.
+    g_keys.pad_was = input_delivered_buttons();
+    keys_fill(g_keys_page);
+    add_text_row(dialog, &g_keys_value[0], kKeysPageRow, g_keys_label[0], g_keys_help[0], g_keys_text[0]);
+    for (int r = 1; r < kKeysRows; ++r) {
+        add_text_row(dialog, &g_keys_value[r], kKeysFirstRow + r - 1, g_keys_label[r], g_keys_help[r], g_keys_text[r]);
+    }
+    log_rows("PCKeys", dialog, kKeysRows, kKeysRows);
+    if (dialog_row_count(dialog) < kKeysRows) return;
+    auto* d = static_cast<std::uint8_t*>(dialog);
+    g_keys.rows = d + kDialogRows;
+    for (int r = 0; r < kKeysRows; ++r) g_keys.widget[r] = dialog_widget(dialog, r);
+    g_keys.dialog = d;
+    if (!keys_alive()) {
+        host_log("pc-options: PCKeys: the dialog is not laid out as expected; bindings show but cannot change here");
+        g_keys = KeysScreen{};
+    }
+}
+
+// The screen's per-frame work, on the menu thread. `row` is which of the
+// screen's lists is updating: -2 the dialog's own, 0 the page row's value,
+// 1..7 an action row's.
+void keys_update(int row, bool focused) {
+    bool rows_changed = false, values_changed = false;
+    // Restore Defaults forgets a pending press when the cursor leaves it or
+    // time runs out, and "Restored" goes back to what the row does.
+    if (g_keys_reset != KeysReset::Idle &&
+        ((focused && row >= 0 && !keys_row_reset(row)) ||
+         std::chrono::steady_clock::now() - g_keys_reset_at > std::chrono::seconds(4))) {
+        g_keys_reset = KeysReset::Idle;
+        for (int r = 1; r < kKeysRows; ++r) {
+            if (keys_row_reset(r)) {
+                keys_fill_reset_text(r);
+                redraw(g_keys.widget[r] + kChoiceList);
+            }
+        }
+    }
+    if (const int done = host_bind_capture_take_done(); done >= 0) {
+        // Every row, not just the one captured: a key taken from another
+        // action on this page changes that row too.
+        for (int r = 1; r < kKeysRows; ++r) keys_fill_value(r);
+        values_changed = true;
+    }
+    if (focused && row >= 0 && host_bind_capturing() < 0) {
+        const std::uint32_t pad = input_delivered_buttons();
+        const std::uint32_t edge = pad & ~g_keys.pad_was;
+        g_keys.pad_was = pad;
+        const std::uint32_t decide = menu_confirm_button();
+        if (row == 0 && (edge & (decide | 0x20u | 0x80u))) {
+            // Right, or Circle / a click, is the next page; Left the previous.
+            keys_fill(g_keys.page + ((edge & 0x80u) ? -1 : 1));
+            rows_changed = values_changed = true;
+        } else if (keys_row_bound(row) && host_bind_take_clear_key()) {
+            host_binding_clear(keys_action(row));
+            keys_fill_value(row);
+            redraw(g_keys.widget[row] + kChoiceList);
+            g_keys_save.store(true, std::memory_order_relaxed);
+        } else if (keys_row_bound(row) && (edge & decide)) {
+            to_utf16(g_keys_text[row], "Press a key...");
+            redraw(g_keys.widget[row] + kChoiceList);
+            host_bind_capture_begin(keys_action(row));
+        } else if (keys_row_reset(row) && (edge & decide)) {
+            if (g_keys_reset == KeysReset::Armed) {
+                host_bindings_load_defaults();
+                g_keys_save.store(true, std::memory_order_relaxed);
+                g_keys_reset = KeysReset::Done;
+                for (int r = 1; r < kKeysRows; ++r) keys_fill_value(r);
+                host_log("pc-options: key bindings restored to their defaults");
+            } else {
+                g_keys_reset = KeysReset::Armed;
+            }
+            g_keys_reset_at = std::chrono::steady_clock::now();
+            keys_fill_reset_text(row);
+            values_changed = true;
+        }
+    }
+    if (rows_changed) redraw(g_keys.rows);
+    if (values_changed) {
+        for (int r = 0; r < kKeysRows; ++r) redraw(g_keys.widget[r] + kChoiceList);
+    }
+}
+
+// The "Defaults" row sub_1f20900 appends after the handler returns, in a
+// section that has no slot for it - Key Bindings, whose eight rows are all
+// that fit above the key guide. The other three sections keep it: their
+// movies carry the label slot right after the last row
+// (engine/menu_assets.cpp), and their rows are built with real defaults.
+// Without a slot it never drew - but the rows list still counted it, and
+// pressing Down past the last row scrolled the captions up by one while the
+// values, which are separate lists, stayed where they were: every caption
+// beside the wrong value. So there it comes off again, the way a vector
+// element is destroyed -
+// its two caption copies freed, its widget unreferenced - and the rows are
+// laid out again from the vector, as sub_1f20900 itself last did.
+void drop_defaults_row(std::uint8_t* dialog) {
+    std::uint64_t begin = 0, end = 0;
+    std::memcpy(&begin, dialog + kItemsBegin, sizeof(begin));
+    std::memcpy(&end, dialog + kItemsEnd, sizeof(end));
+    if (!begin || end < begin + kItemStride) return;
+    auto* rec = reinterpret_cast<std::uint8_t*>(static_cast<std::uintptr_t>(end - kItemStride));
+    const char16_t* label = nullptr;
+    std::memcpy(&label, rec, sizeof(label));
+    if (label != message_text(kDefaultsRowId)) {
+        host_log("pc-options: the last row is not Defaults; left alone");
+        return;
+    }
+    Captions::free_wstring(rec + 0x08);
+    Captions::free_wstring(rec + 0x48);
+    std::uint64_t widget = 0;
+    std::memcpy(&widget, rec + kItemWidget, sizeof(widget));
+    if (widget) {
+        // DLReferenceCountObject: the count at +8, and the last reference
+        // calls the deleting destructor, slot 0.
+        auto* w = reinterpret_cast<std::uint8_t*>(static_cast<std::uintptr_t>(widget));
+        std::int32_t refs = 0;
+        std::memcpy(&refs, w + 8, sizeof(refs));
+        const std::int32_t left = refs - 1;
+        std::memcpy(w + 8, &left, sizeof(left));
+        if (refs == 1) {
+            std::uint64_t vt = 0, dtor = 0;
+            std::memcpy(&vt, w, sizeof(vt));
+            std::memcpy(&dtor, reinterpret_cast<void*>(static_cast<std::uintptr_t>(vt)), sizeof(dtor));
+            hle_call_guest<std::int64_t>(reinterpret_cast<void*>(static_cast<std::uintptr_t>(dtor)), w);
+        }
+    }
+    end -= kItemStride;
+    std::memcpy(dialog + kItemsEnd, &end, sizeof(end));
+    hle_call_guest<std::int64_t>(guest_fn(kLayoutRows), dialog, 0);
+}
+
+
 struct DefaultsView {
     std::uint8_t* dialog=nullptr;
     std::uint8_t* pick=nullptr;
@@ -243,7 +530,6 @@ struct DefaultsView {
 DefaultsView g_defaults_view;
 char16_t g_defaults_caption[32];
 constexpr std::size_t kPickItems=0x100;
-void redraw(std::uint8_t* list) { hle_call_guest<std::int64_t>(guest_fn(kListRedraw),list); }
 void keep_defaults_row(std::uint8_t* dialog, int pick_row) {
     g_defaults_view = DefaultsView{};
     const int rows = dialog_row_count(dialog);
@@ -296,7 +582,8 @@ std::int64_t open_named(void* root, void* params, const char* name, void* handle
     const std::int64_t dialog =
         hle_call_guest<std::int64_t>(guest_fn(kOpenSection), root, params, g_open_name, handler, 0, 0);
     auto* d = reinterpret_cast<std::uint8_t*>(static_cast<std::uintptr_t>(dialog));
-    if (d) {
+    if(d && pick_row==-2) drop_defaults_row(d);
+    else if (d) {
         keep_defaults_row(d, pick_row);
     }
     return dialog;
@@ -317,7 +604,7 @@ Slider camera[] = {
     {nullptr,121001,0.5f,0.10f,5}
 };
 bool seeded=false;
-bool camera_page=false,graphics_page=false;
+bool camera_page=false,graphics_page=false,input_page=false;
 Slider graphics_sliders[]={{nullptr,117007,0,0.2f,5},{nullptr,117006,1,0.2f,0}};
 Slider effect_sliders[]={{nullptr,120000,0,0.1f,10},{nullptr,120002,0,0.2f,5}};
 struct StartupToggle { std::atomic<bool>* setting=nullptr; std::uint32_t id; std::uint8_t value=0,last=0; };
@@ -327,7 +614,7 @@ StartupToggle graphics_toggles[]={{nullptr,117001},{nullptr,117000}};
 StartupToggle effect_toggles[]={{nullptr,117005},{nullptr,117002},{nullptr,117003},{nullptr,120001}};
 bool graphics_seeded=false,effects_seeded=false;
 std::int32_t output_resolution=1,last_resolution=1;
-const Choice outputs[]={{0,117010},{1,117012},{2,117013},{3,117015}};
+const Choice outputs[]={{0,117010},{1,117012},{2,117013},{3,117015},{4,117040},{5,117041},{6,117042},{7,117043},{8,117044},{9,117045}};
 template<typename Rows> void SeedSliders(Rows& rows) {
     for (auto& s:rows) s.value=s.last=static_cast<std::uint8_t>(std::clamp(std::lround((s.setting->load()-s.base)/s.step),0l,10l));
 }
@@ -374,7 +661,7 @@ GUEST_ABI void GraphicsHandler(void* dialog,void* params) {
     SeedSliders(graphics_sliders);
     for (auto& s:graphics_sliders) add_slider_row(dialog,&s.value,s.id,s.def);
     output_resolution=last_resolution=BbSettings::Get().output_res;
-    add_list_row(dialog,&output_resolution,117004,outputs,4,BbSettings::OutputDefault);
+    add_list_row(dialog,&output_resolution,117004,outputs,BbSettings::OutputCount,BbSettings::OutputDefault);
     graphics_seeded=true;log_rows("PCGraphics",dialog,5,5);
 }
 GUEST_ABI void EffectsHandler(void* dialog,void* params) {
@@ -400,6 +687,22 @@ GUEST_ABI void* OpenEffectsRow(void* out,void* ctx) {
     GuestFunction f(kOpenerFunctorVTable,reinterpret_cast<void*>(&OpenEffects));
     hle_call_guest<std::int64_t>(guest_fn(kOpenSectionFlow),out,ctx,f.buf);return out;
 }
+
+StartupToggle controls[]={{nullptr,118000},{nullptr,118002},{nullptr,118003},{nullptr,116002},{nullptr,118005}};
+std::uint8_t sensitivity=5,last_sensitivity=5;bool controls_seeded=false;
+GUEST_ABI void ControlsHandler(void* dialog,void*) {
+    alignas(16) std::uint8_t scratch[0x100]{};hle_call_guest<std::int64_t>(guest_fn(kScratchInit),&scratch);
+    auto& s=BbSettings::Get();sensitivity=last_sensitivity=s.mouse_sensitivity;
+    for(auto& t:controls){t.value=t.last=t.setting->load()?1:0;}
+    add_toggle_row(dialog,&controls[0].value,118000,1);
+    add_slider_row(dialog,&sensitivity,118001,5);
+    for(int i=1;i<5;i++)add_toggle_row(dialog,&controls[i].value,controls[i].id,i==3?1:0);
+    controls_seeded=true;log_rows("PCControls",dialog,6,6);
+}
+GUEST_ABI std::int64_t OpenControls(void* root,void* params) {return open_named(root,params,"PCControls",reinterpret_cast<void*>(&ControlsHandler),-1);}
+GUEST_ABI std::int64_t OpenKeys(void* root,void* params) {return open_named(root,params,"PCKeys",reinterpret_cast<void*>(&pc_keys_handler),-2);}
+GUEST_ABI void* OpenControlsRow(void* out,void* ctx) {GuestFunction f(kOpenerFunctorVTable,reinterpret_cast<void*>(&OpenControls));hle_call_guest<std::int64_t>(guest_fn(kOpenSectionFlow),out,ctx,f.buf);return out;}
+GUEST_ABI void* OpenKeysRow(void* out,void* ctx) {GuestFunction f(kOpenerFunctorVTable,reinterpret_cast<void*>(&OpenKeys));hle_call_guest<std::int64_t>(guest_fn(kOpenSectionFlow),out,ctx,f.buf);return out;}
 GUEST_ABI void* SystemFinalize(void* out,void* builder,void* arg3) {
     std::int64_t flag=0;
     { Captions c(110013);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenEnhancementsRow));
@@ -410,6 +713,10 @@ GUEST_ABI void* SystemFinalize(void* out,void* builder,void* arg3) {
         { Captions c(110010);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenEffectsRow));
           hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag); }
     }
+    if(input_page) {
+        {Captions c(110008);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenControlsRow));hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag);}
+        {Captions c(110009);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenKeysRow));hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag);}
+    }
     if (camera_page) { Captions c(110011);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenCameraRow));
       hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag); }
     hle_call_guest<std::int64_t>(guest_fn(kSystemFinalize),out,builder,arg3);
@@ -419,7 +726,7 @@ GUEST_ABI void* SystemFinalize(void* out,void* builder,void* arg3) {
 } // namespace
 
 bool Install(std::uint8_t* image,std::size_t size) {
-    if (!BbSettings::Get().camera_controls && !BbSettings::Get().change_appearance && !BbSettings::Get().rebirth && !BbSettings::Get().graphics_controls) return false;
+    if (!BbSettings::Get().camera_controls && !BbSettings::Get().change_appearance && !BbSettings::Get().rebirth && !BbSettings::Get().graphics_controls && !BbSettings::Get().pc_controls) return false;
     const char* assets=std::getenv("BB_PC_MENU_ASSETS");
     const char* game=std::getenv("BB_GAME_DIR");
     if (!assets || !*assets || !game || !*game) return false;
@@ -466,6 +773,10 @@ bool Install(std::uint8_t* image,std::size_t size) {
     g_slide=reinterpret_cast<std::uint64_t>(image);
     MenuMemory::Install(image,size);
     auto& settings=BbSettings::Get();
+    input_page=settings.pc_controls;
+    controls[0].setting=&settings.mouse_camera;controls[1].setting=&settings.mouse_invert_x;
+    controls[2].setting=&settings.mouse_invert_y;controls[3].setting=&settings.mouse_menu;
+    controls[4].setting=&settings.mouse_auto_rotation;
     camera_page=settings.camera_controls;
     graphics_page=Graphics::Enabled();
     graphics_toggles[0].setting=&settings.effects[4];graphics_toggles[1].setting=&settings.effects[3];
@@ -489,6 +800,39 @@ bool Install(std::uint8_t* image,std::size_t size) {
     host_log("pc-options: native System pages installed (%u local assets): Enhancements%s%s",installed,graphics_page?", Graphics / Effects":"",camera_page?", Camera":"");
     return true;
 }
+bool ClickDecides(std::uint8_t* list, int index) {
+    return g_installed && g_keys.dialog && list == g_keys.rows && index >= 1 && index < kKeysRows &&
+           (keys_row_bound(index) || keys_row_reset(index)) && keys_alive();
+}
+
+void ListUpdate(std::uint8_t* comp, bool focused) {
+    if (!g_installed) {
+        return;
+    }
+    auto* c = static_cast<std::uint8_t*>(comp);
+    defaults_view_update(c, focused);
+    if (!g_keys.dialog) {
+        return;
+    }
+    int row = -1;
+    if (c == g_keys.rows) {
+        row = -2;
+    } else {
+        for (int r = 0; r < kKeysRows && row == -1; ++r) {
+            if (c == g_keys.widget[r] + kChoiceList) row = r;
+        }
+    }
+    if (row == -1) {
+        return;
+    }
+    if (!keys_alive()) {
+        g_keys = KeysScreen{};
+        return;
+    }
+    keys_update(row, focused);
+}
+
+
 void Tick() {
     if (!g_installed) return;
     bool changed=false;
@@ -514,6 +858,8 @@ void Tick() {
         for (auto& t:rows) if (t.value!=t.last) { t.last=t.value;*t.setting=t.value!=0;changed=true; }
     };
     push_sliders(graphics_sliders,graphics_seeded);push_sliders(effect_sliders,effects_seeded);
+    push_toggles(controls,controls_seeded);
+    if(controls_seeded && sensitivity!=last_sensitivity){last_sensitivity=std::min<std::uint8_t>(sensitivity,10);BbSettings::Get().mouse_sensitivity=last_sensitivity;changed=true;}
     push_toggles(graphics_toggles,graphics_seeded);push_toggles(effect_toggles,effects_seeded);
     if (graphics_seeded && output_resolution!=last_resolution) {
         last_resolution=std::clamp(output_resolution,0,BbSettings::OutputCount-1);

@@ -169,4 +169,21 @@ void Commit(std::span<Hook> hooks) {
 #endif
     }
 }
+bool WriteCode(void* address,const void* bytes,std::size_t size) {
+    if (!address || !bytes || !size || size>4096) return false;
+    const auto at=reinterpret_cast<std::uintptr_t>(address),lo=at&~std::uintptr_t(4095);
+    const auto length=((at+size+4095)&~std::uintptr_t(4095))-lo;
+#ifdef _WIN32
+    DWORD old=0,unused=0;
+    if (!VirtualProtect(reinterpret_cast<void*>(lo),length,PAGE_EXECUTE_READWRITE,&old)) return false;
+    std::memcpy(address,bytes,size);
+    const bool ok=VirtualProtect(reinterpret_cast<void*>(lo),length,old,&unused)!=0;
+    return FlushInstructionCache(GetCurrentProcess(),address,size)!=0 && ok;
+#else
+    if (mprotect(reinterpret_cast<void*>(lo),length,PROT_READ|PROT_WRITE|PROT_EXEC)) return false;
+    std::memcpy(address,bytes,size);
+    __builtin___clear_cache(reinterpret_cast<char*>(address),reinterpret_cast<char*>(address)+size);
+    return mprotect(reinterpret_cast<void*>(lo),length,PROT_READ|PROT_EXEC)==0;
+#endif
+}
 } // namespace BbEngine

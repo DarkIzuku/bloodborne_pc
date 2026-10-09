@@ -11,6 +11,7 @@
 #include "sdl_window.h"
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
+#include "input/input.h"
 
 namespace Frontend {
 
@@ -148,6 +149,7 @@ bool WindowSDL::PollEvents() {
     }
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
+        BbInput::Event(event,text_active || BbOverlay::CapturesInput());
         if (event.type == SDL_EVENT_MOUSE_MOTION) {
             last_mouse_motion_ms = SDL_GetTicks();
         }
@@ -193,7 +195,8 @@ bool WindowSDL::PollEvents() {
             break;
         }
     }
-    UpdateCursor();
+    BbInput::Pump(window,text_active);
+    if (!BbInput::Enabled()) UpdateCursor();
     return is_open;
 }
 

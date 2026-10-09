@@ -291,6 +291,7 @@ private:
         RenderState state;
         u32 scene_size = 0;
         std::array<float, 2> target_scale{};
+        std::array<float,2> target_offset{};
     } begin_memo;
     u64 begin_memo_hits = 0, begin_memo_misses = 0;
     void Resolve();
@@ -433,6 +434,7 @@ private:
     bool gbuffer_draw = false;
     std::unique_ptr<TemporalUpscaler> upscaler; // bbport: FSR (docs/upscaler.md)
     std::array<float, 2> draw_jitter{};         ///< viewport offset of the current draw, pixels
+    std::array<float,2> target_offset{};
     std::array<float, 2> target_scale{1.0f, 1.0f}; ///< pass drawn into the upscaler's output-size images
     const bool host_markers_enabled;
     const bool guest_markers_enabled;

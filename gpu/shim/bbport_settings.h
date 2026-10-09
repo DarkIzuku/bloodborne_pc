@@ -46,9 +46,9 @@ inline constexpr Effect Effects[] = {
 };
 inline constexpr int EffectCount = int(sizeof(Effects) / sizeof(Effects[0]));
 /// Live output resolutions: the upscaler's output and the UI host targets.
-inline constexpr int OutputWidths[] = {1280, 1920, 2560, 3840};
-inline constexpr int OutputHeights[] = {720, 1080, 1440, 2160};
-inline constexpr int OutputCount = 4;
+inline constexpr int OutputWidths[] = {1280,1920,2560,3840,2560,3440,3840,3840,5120,5120};
+inline constexpr int OutputHeights[] = {720,1080,1440,2160,1080,1440,1600,1080,1440,2160};
+inline constexpr int OutputCount = 10;
 inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size
 
 struct Values {
@@ -74,6 +74,9 @@ struct Values {
     /// Applied at start (patches.py); the menu shows when a restart is needed.
     std::atomic<bool> effects[EffectCount]{};
     std::atomic<bool> camera_controls{false}; // startup engine hook, opt-in
+    std::atomic<bool> widescreen{true},pc_controls{true},mouse_camera{true},mouse_menu{true};
+    std::atomic<bool> mouse_invert_x{false},mouse_invert_y{false},mouse_auto_rotation{false};
+    std::atomic<int> mouse_sensitivity{5};
     std::atomic<bool> change_appearance{false}, rebirth{false}; // next launch, engine features
     std::atomic<bool> graphics_controls{false}, graphics_vignette{true};
     std::atomic<float> graphics_ao_strength{1},graphics_shadow_scale{1},graphics_bloom{1},graphics_saturation{1};

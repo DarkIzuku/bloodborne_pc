@@ -14,6 +14,7 @@
 #include <string.h>
 #include <time.h>
 #include <SDL3/SDL.h>
+#include "../gpu/shim/input/input.h"
 #include <sys/stat.h>
 
 #define ERR_INVALID_ARG ((int32_t)0x80920001)
@@ -310,7 +311,15 @@ static void sample_host(PadData *d) {
         if ((d->buttons & BTN_TOUCHPAD) && !d->touch_count) touch_click(d,0);
         if (touch_right) touch_click(d,1);
     }
-    if (k) apply_keyboard(d,k);
+    int nk=0; if(k) SDL_GetKeyboardState(&nk);
+    BbPcPad pc={.buttons=d->buttons,.lx=d->left_x,.ly=d->left_y,.rx=d->right_x,.ry=d->right_y,
+        .l2=d->l2,.r2=d->r2,.touch_count=d->touch_count};
+    for(int i=0;i<d->touch_count && i<2;i++) {pc.touch[i].x=d->touches[i].x;pc.touch[i].y=d->touches[i].y;pc.touch[i].id=d->touches[i].id;}
+    if(bbgpu_pc_input(&pc,k,nk,g!=NULL)) {
+        d->buttons=pc.buttons;d->left_x=pc.lx;d->left_y=pc.ly;d->right_x=pc.rx;d->right_y=pc.ry;
+        d->l2=pc.l2;d->r2=pc.r2;d->touch_count=pc.touch_count;
+        for(int i=0;i<pc.touch_count && i<2;i++)d->touches[i]=(PadTouch){.x=pc.touch[i].x,.y=pc.touch[i].y,.id=pc.touch[i].id};
+    } else if (k) apply_keyboard(d,k);
 }
 
 /* BB_PAD_FILE=<file>: scripted input for automated runs. The file holds whitespace-separated

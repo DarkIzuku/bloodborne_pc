@@ -6,6 +6,7 @@
 #endif
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_settings.h"
+#include "input/ini_bindings.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -76,6 +77,22 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fsr4_auto_exposure = i != 0;
     } else if (key == "fsr4_invert_jitter") {
         v.fsr4_invert_jitter = i != 0;
+    } else if (key == "widescreen") {
+        v.widescreen=i!=0;
+    } else if (key == "pc_controls") {
+        v.pc_controls=i!=0;
+    } else if (key == "mouse_camera") {
+        v.mouse_camera=i!=0;
+    } else if (key == "mouse_menu") {
+        v.mouse_menu=i!=0;
+    } else if (key == "mouse_invert_x") {
+        v.mouse_invert_x=i!=0;
+    } else if (key == "mouse_invert_y") {
+        v.mouse_invert_y=i!=0;
+    } else if (key == "mouse_auto_rotation") {
+        v.mouse_auto_rotation=i!=0;
+    } else if (key == "mouse_sensitivity") {
+        v.mouse_sensitivity=std::clamp(i,0,10);
     } else if (key == "camera_controls") {
         v.camera_controls = i != 0;
     } else if (key == "change_appearance") {
@@ -274,6 +291,14 @@ void Save() {
     put("graphics_bloom",fixed(v.graphics_bloom,2));
     put("graphics_saturation",fixed(v.graphics_saturation,2));
     put("camera_controls", flag(v.camera_controls));
+    put("widescreen",flag(v.widescreen));
+    put("pc_controls",flag(v.pc_controls));
+    put("mouse_camera",flag(v.mouse_camera));
+    put("mouse_menu",flag(v.mouse_menu));
+    put("mouse_invert_x",flag(v.mouse_invert_x));
+    put("mouse_invert_y",flag(v.mouse_invert_y));
+    put("mouse_auto_rotation",flag(v.mouse_auto_rotation));
+    put("mouse_sensitivity",std::to_string(v.mouse_sensitivity.load()));
     put("change_appearance", flag(v.change_appearance));
     put("rebirth", flag(v.rebirth));
     put("camera_fov_scale", fixed(v.camera_fov_scale, 2));
@@ -288,6 +313,7 @@ void Save() {
         put("menu_pos", fixed(v.menu_x, 4) + "," + fixed(v.menu_y, 4));
     }
 
+    BbInputConfig::Append(keys);
     std::string out;
     bool had_lines = false;
     std::vector<bool> written(keys.size());

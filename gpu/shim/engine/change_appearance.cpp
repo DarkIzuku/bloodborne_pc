@@ -2,6 +2,8 @@
 // The editor controller/refcount lifecycle is adapted from bbhost, not the GPU renderer.
 #include "engine_hooks.h"
 #include "camera.h"
+#include "widescreen.h"
+#include "../input/input.h"
 #include "option_menu.h"
 #include "engine_state.h"
 #include "rebirth.h"
@@ -154,7 +156,9 @@ std::int64_t __attribute__((sysv_abi)) FrameHook(std::uint64_t, const std::uint6
     change_appearance_tick();
     Rebirth::Tick();
     Options::Tick();
+    BbInput::Tick();
     Camera::Tick();
+    Widescreen::Tick();
     return 0; // The established FPS++ implementation still runs, byte for byte.
 }
 } // namespace
@@ -164,7 +168,7 @@ void Install(std::uint8_t* image, std::size_t size) {
     const char* identity = std::getenv("BB_ENGINE_IMAGE_SHA256");
     const bool mirror = asset && *asset;
     const bool respec=std::getenv("BB_REBIRTH_ASSET");
-    if (!mirror && !respec && !BbSettings::Get().camera_controls && !BbSettings::Get().graphics_controls) return;
+    if (!mirror && !respec && !BbSettings::Get().camera_controls && !BbSettings::Get().graphics_controls && !BbSettings::Get().pc_controls && !BbSettings::Get().widescreen) return;
     if (!identity || std::strcmp(identity, "071df19c8880086d97182dbc057bc8cb37badaca57d9112683836b24a0444c0a")) {
         Log("mirror disabled: executable identity was not verified"); return;
     }
@@ -176,7 +180,7 @@ void Install(std::uint8_t* image, std::size_t size) {
         !std::filesystem::equivalent(resolved, std::filesystem::path(original) / "dvdroot_ps4/map/mapstudio/m21_00_00_00.msb.dcx", error))) {
         Log("mirror disabled: a user mod owns the Dream layout");
         asset = nullptr;
-        if (!respec && !BbSettings::Get().camera_controls && !BbSettings::Get().graphics_controls) return;
+        if (!respec && !BbSettings::Get().camera_controls && !BbSettings::Get().graphics_controls && !BbSettings::Get().pc_controls && !BbSettings::Get().widescreen) return;
     }
     Hook hooks[2];
     if (!Prepare(hooks[0], image, size, 0x1c1cce0, kStepPrologue, StepHook) ||
@@ -190,7 +194,9 @@ void Install(std::uint8_t* image, std::size_t size) {
         g_watch = menu_steps_watch(kListType,kListName); g_frame_on = g_watch>=0;
         Log("Dream mirror enabled: native appearance editor and ChrMake_BG preview; %s", asset);
     }
+    const bool input=BbInput::Install(image,size);
     const bool camera = Camera::Install(image, size);
+    const bool wide=Widescreen::Install(image,size);
     const bool graphics=Graphics::Install(image,size);
     const bool menus=Options::Install(image,size);
     if (!menus && g_frame_on && !MenuMemory::Install(image,size)) {
@@ -198,7 +204,7 @@ void Install(std::uint8_t* image, std::size_t size) {
         Log("mirror disabled: native editor memory budget differs");
     }
     const bool rebirth=menus && Rebirth::Install(image,size);
-    if (!g_frame_on && !camera && !rebirth && !menus && !graphics) {
+    if (!g_frame_on && !camera && !rebirth && !menus && !graphics && !wide && !input) {
         for (auto& hook : hooks) Discard(hook);
         Log("engine enhancements disabled: no compatible feature could be prepared"); return;
     }

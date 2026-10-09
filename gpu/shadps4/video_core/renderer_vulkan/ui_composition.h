@@ -2,6 +2,7 @@
 #pragma once
 
 #include <array>
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -37,6 +38,11 @@ constexpr bool ObserveDraw(uint32_t mrt_mask, uint64_t vs_hash, bool has_stencil
            (mrt_mask == 0 && has_stencil && MovieShader(vs_hash));
 }
 
+struct FitTransform {std::array<float,2> scale;std::array<float,2> offset;};
+inline FitTransform Fit(uint32_t w,uint32_t h) {
+    const float s=std::min(float(w)/1920,float(h)/1080);
+    return {{s,s},{(float(w)-1920*s)/2,(float(h)-1080*s)/2}};
+}
 inline std::array<float, 2> Scale(uint32_t guest_width, uint32_t guest_height,
                                 uint32_t output_width, uint32_t output_height,
                                 bool native_coordinates) {

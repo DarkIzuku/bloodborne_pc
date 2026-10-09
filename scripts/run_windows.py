@@ -148,7 +148,8 @@ def main():
         # Engine features are prepared locally and only mounted after runtime byte checks.
         for key in ('BB_DREAM_MIRROR_ASSET', 'BB_ENGINE_IMAGE_SHA256', 'BB_PC_MENU_ASSETS', 'BB_REBIRTH_ASSET'):
             os.environ.pop(key, None)
-        if any(settings_value(config, key) == '1' for key in ('change_appearance', 'camera_controls', 'rebirth', 'graphics_controls')):
+        if (any(settings_value(config, key) == '1' for key in ('change_appearance', 'camera_controls', 'rebirth', 'graphics_controls'))
+            or any(settings_value(config, key) != '0' for key in ('pc_controls', 'widescreen'))):
             try:
                 from engine_assets import prepare_mirror, verify_executable
                 os.environ['BB_ENGINE_IMAGE_SHA256'] = verify_executable(out / 'eboot.elf')
@@ -156,7 +157,8 @@ def main():
                     asset = prepare_mirror(merged, out / 'eboot.elf', data / 'engine-assets')
                     os.environ['BB_DREAM_MIRROR_ASSET'] = str(asset)
                     print(f'Engine: Dream mirror prepared locally: {asset}', flush=True)
-                if any(settings_value(config, key) == '1' for key in ('change_appearance', 'camera_controls', 'rebirth', 'graphics_controls')):
+                if (any(settings_value(config, key) == '1' for key in ('change_appearance', 'camera_controls', 'rebirth', 'graphics_controls'))
+                    or any(settings_value(config, key) != '0' for key in ('pc_controls', 'widescreen'))):
                     from engine_assets import prepare_menu_assets
                     try:
                         menus = prepare_menu_assets(merged, out / 'eboot.elf', data / 'engine-assets',
