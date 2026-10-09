@@ -160,7 +160,7 @@ def prepare_mirror(game, elf_path, cache):
     return destination.resolve()
 
 
-def prepare_menu_assets(game, elf_path, cache, tool):
+def prepare_menu_assets(game, elf_path, cache, tool, rebirth=False):
     """Generate bbhost's native option movie and messages from the player's own dump.
 
     Validate every language, source and cached output together before publishing the
@@ -176,6 +176,8 @@ def prepare_menu_assets(game, elf_path, cache, tool):
                 for p in sorted(message_dir.glob('*/menu.msgbnd.dcx')) if p.is_file()]
     if len(sources) < 2 or len(sources) > 24:
         raise ValueError('Native options require valid menu bundles for every installed language')
+    if rebirth:
+        sources.append((Path('dvdroot_ps4/script/talk/m24_02_00_00.talkesdbnd.dcx'), 'rebirth'))
     generator = sha(tool.read_bytes())
     manifest_path = root / 'manifest.json'
     try:

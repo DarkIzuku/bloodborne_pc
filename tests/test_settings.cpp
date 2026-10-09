@@ -74,6 +74,12 @@ int main() {
     BbSettings::Load();
     assert(s.camera_controls && s.camera_fov_scale == 1.25f);
     assert(s.camera_distance_scale == 0.80f && s.camera_height_scale == 1.10f);
+    s.change_appearance=true;s.rebirth=true;s.graphics_controls=true;
+    s.graphics_bloom=0.7f;s.graphics_shadow_scale=1.4f;
+    BbSettings::Save();
+    s.rebirth=false;s.graphics_bloom=1.0f;
+    BbSettings::Load();
+    assert(s.change_appearance && s.rebirth && s.graphics_controls && s.graphics_bloom==0.7f && s.graphics_shadow_scale==1.4f);
     // Edited configs must not feed infinite/NaN camera transforms to the engine.
     { std::ofstream file(path); file << "camera_fov_scale=nan\ncamera_distance_scale=-10\ncamera_height_scale=inf\n"; }
     BbSettings::Load();

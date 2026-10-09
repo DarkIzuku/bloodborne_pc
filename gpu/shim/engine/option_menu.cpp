@@ -4,6 +4,7 @@
 #include "option_menu.h"
 #include "engine_hooks.h"
 #include "menu_memory.h"
+#include "graphics.h"
 #include "bbport_platform.h"
 #include "bbport_settings.h"
 #include <algorithm>
@@ -25,6 +26,7 @@ bool g_installed=false;
 constexpr std::uint64_t kPreferredGuestSlide=0x400000;
 constexpr std::uint64_t kOpenSection=0x1f20900,kScratchInit=0x208af20,kAddSliderRow=0x1f2ac00;
 constexpr std::uint64_t kAddChoiceRow=0x1f2a100,kBuildOnOff=0x1f2b3b0,kWstrCpy=0x2d67040;
+constexpr std::uint64_t kListAppend=0x1f1c0c0,kAddListRow=0x1f29370;
 constexpr std::uint64_t kListRedraw=0x1ed06e0,kLayoutRows=0x1f28de0,kMsgRepository=0x1ee8cc0;
 constexpr std::uint32_t kDefaultsRowId=0x9d8a,kMsgMenuText=200,kMsgLineHelp=201;
 constexpr std::uint64_t kAddCommandRow=0x1f4e2a0,kSystemFinalize=0x1fea630;
@@ -171,6 +173,29 @@ void add_toggle_row(void* dialog, void* value, std::uint32_t id, std::uint8_t de
     free_entries(list, n);
 }
 
+struct Choice {
+    std::int32_t value;
+    std::uint32_t id;
+};
+
+// A pick-list row. Its entries are the 0x48-byte shape above with an int32
+// value, which is the same shape the game builds for Language.
+void add_list_row(void* dialog, void* value, std::uint32_t id, const Choice* choices, int count, std::int32_t def) {
+    Captions c(id);
+    // The container is an inline array plus a count at +0x908; zeroing it is
+    // the whole of its initialisation.
+    alignas(16) std::uint8_t list[0x1000]{};
+    for (int i = 0; i < count; ++i) {
+        alignas(16) std::uint8_t entry[0x48];
+        make_entry(entry, choices[i].value, message_text(choices[i].id));
+        hle_call_guest<std::int64_t>(guest_fn(kListAppend), &list, &entry);
+        free_entries(entry, 1);
+    }
+    hle_call_guest<std::int64_t>(guest_fn(kAddListRow), dialog, &c.buf[0], value, &list, &def);
+    free_entries(list, static_cast<std::uint64_t>(count));
+}
+
+
 // The dialog's row vector, found by reading the row builder: sub_1f2a100 ends
 // with sub_1f2bf60(dialog + 0xe50, &row), and that is a push_back of 0x90-byte
 // records - begin at +0xe58, end at +0xe60, each holding the row's caption
@@ -292,6 +317,20 @@ Slider camera[] = {
     {nullptr,121001,0.5f,0.10f,5}
 };
 bool seeded=false;
+bool camera_page=false,graphics_page=false;
+Slider graphics_sliders[]={{nullptr,117007,0,0.2f,5},{nullptr,117006,1,0.2f,0}};
+Slider effect_sliders[]={{nullptr,120000,0,0.1f,10},{nullptr,120002,0,0.2f,5}};
+struct StartupToggle { std::atomic<bool>* setting=nullptr; std::uint32_t id; std::uint8_t value=0,last=0; };
+StartupToggle enhancements[]={{nullptr,124001},{nullptr,124002},{nullptr,124004}};
+bool enhancements_seeded=false;
+StartupToggle graphics_toggles[]={{nullptr,117001},{nullptr,117000}};
+StartupToggle effect_toggles[]={{nullptr,117005},{nullptr,117002},{nullptr,117003},{nullptr,120001}};
+bool graphics_seeded=false,effects_seeded=false;
+std::int32_t output_resolution=1,last_resolution=1;
+const Choice outputs[]={{0,117010},{1,117012},{2,117013},{3,117015}};
+template<typename Rows> void SeedSliders(Rows& rows) {
+    for (auto& s:rows) s.value=s.last=static_cast<std::uint8_t>(std::clamp(std::lround((s.setting->load()-s.base)/s.step),0l,10l));
+}
 void SeedCamera() {
     for (auto& s:camera) s.value=s.last=static_cast<std::uint8_t>(std::clamp(std::lround((s.setting->load()-s.base)/s.step),0l,10l));
     seeded=true;
@@ -312,19 +351,75 @@ GUEST_ABI void* OpenCameraRow(void* out,void* ctx) {
     hle_call_guest<std::int64_t>(guest_fn(kOpenSectionFlow),out,ctx,f.buf);
     return out;
 }
+GUEST_ABI void EnhancementsHandler(void* dialog,void* params) {
+    host_log("pc-options: PCEnhance opened, dialog=%p params=%p",dialog,params);
+    alignas(16) std::uint8_t scratch[0x100]{};
+    hle_call_guest<std::int64_t>(guest_fn(kScratchInit),&scratch);
+    for (auto& t:enhancements) { t.value=t.last=t.setting->load()?1:0;add_toggle_row(dialog,&t.value,t.id,0); }
+    enhancements_seeded=true;
+    log_rows("PCEnhance",dialog,3,3);
+}
+GUEST_ABI std::int64_t OpenEnhancements(void* root,void* params) {
+    return open_named(root,params,"PCEnhance",reinterpret_cast<void*>(&EnhancementsHandler),-1);
+}
+GUEST_ABI void* OpenEnhancementsRow(void* out,void* ctx) {
+    GuestFunction f(kOpenerFunctorVTable,reinterpret_cast<void*>(&OpenEnhancements));
+    hle_call_guest<std::int64_t>(guest_fn(kOpenSectionFlow),out,ctx,f.buf);return out;
+}
+GUEST_ABI void GraphicsHandler(void* dialog,void* params) {
+    host_log("pc-options: PCGraphics opened, dialog=%p params=%p",dialog,params);
+    alignas(16) std::uint8_t scratch[0x100]{};
+    hle_call_guest<std::int64_t>(guest_fn(kScratchInit),&scratch);
+    for (auto& t:graphics_toggles) { t.value=t.last=t.setting->load()?1:0;add_toggle_row(dialog,&t.value,t.id,1); }
+    SeedSliders(graphics_sliders);
+    for (auto& s:graphics_sliders) add_slider_row(dialog,&s.value,s.id,s.def);
+    output_resolution=last_resolution=BbSettings::Get().output_res;
+    add_list_row(dialog,&output_resolution,117004,outputs,4,BbSettings::OutputDefault);
+    graphics_seeded=true;log_rows("PCGraphics",dialog,5,5);
+}
+GUEST_ABI void EffectsHandler(void* dialog,void* params) {
+    host_log("pc-options: PCEffects opened, dialog=%p params=%p",dialog,params);
+    alignas(16) std::uint8_t scratch[0x100]{};
+    hle_call_guest<std::int64_t>(guest_fn(kScratchInit),&scratch);
+    for (auto& t:effect_toggles) { t.value=t.last=t.setting->load()?1:0;add_toggle_row(dialog,&t.value,t.id,1); }
+    SeedSliders(effect_sliders);
+    for (auto& s:effect_sliders) add_slider_row(dialog,&s.value,s.id,s.def);
+    effects_seeded=true;log_rows("PCEffects",dialog,6,6);
+}
+GUEST_ABI std::int64_t OpenGraphics(void* root,void* params) {
+    return open_named(root,params,"PCGraphics",reinterpret_cast<void*>(&GraphicsHandler),4);
+}
+GUEST_ABI std::int64_t OpenEffects(void* root,void* params) {
+    return open_named(root,params,"PCEffects",reinterpret_cast<void*>(&EffectsHandler),-1);
+}
+GUEST_ABI void* OpenGraphicsRow(void* out,void* ctx) {
+    GuestFunction f(kOpenerFunctorVTable,reinterpret_cast<void*>(&OpenGraphics));
+    hle_call_guest<std::int64_t>(guest_fn(kOpenSectionFlow),out,ctx,f.buf);return out;
+}
+GUEST_ABI void* OpenEffectsRow(void* out,void* ctx) {
+    GuestFunction f(kOpenerFunctorVTable,reinterpret_cast<void*>(&OpenEffects));
+    hle_call_guest<std::int64_t>(guest_fn(kOpenSectionFlow),out,ctx,f.buf);return out;
+}
 GUEST_ABI void* SystemFinalize(void* out,void* builder,void* arg3) {
-    Captions c(110011);
-    GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenCameraRow));
     std::int64_t flag=0;
-    hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag);
+    { Captions c(110013);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenEnhancementsRow));
+      hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag); }
+    if (graphics_page) {
+        { Captions c(110007);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenGraphicsRow));
+          hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag); }
+        { Captions c(110010);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenEffectsRow));
+          hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag); }
+    }
+    if (camera_page) { Captions c(110011);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenCameraRow));
+      hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag); }
     hle_call_guest<std::int64_t>(guest_fn(kSystemFinalize),out,builder,arg3);
-    host_log("pc-options: System list includes PC Camera");
+    host_log("pc-options: System list includes PC Enhancements%s%s",graphics_page?", PC Graphics / PC Effects":"",camera_page?", PC Camera":"");
     return out;
 }
 } // namespace
 
 bool Install(std::uint8_t* image,std::size_t size) {
-    if (!BbSettings::Get().camera_controls) return false;
+    if (!BbSettings::Get().camera_controls && !BbSettings::Get().change_appearance && !BbSettings::Get().rebirth && !BbSettings::Get().graphics_controls) return false;
     const char* assets=std::getenv("BB_PC_MENU_ASSETS");
     const char* game=std::getenv("BB_GAME_DIR");
     if (!assets || !*assets || !game || !*game) return false;
@@ -371,6 +466,16 @@ bool Install(std::uint8_t* image,std::size_t size) {
     g_slide=reinterpret_cast<std::uint64_t>(image);
     MenuMemory::Install(image,size);
     auto& settings=BbSettings::Get();
+    camera_page=settings.camera_controls;
+    graphics_page=Graphics::Enabled();
+    graphics_toggles[0].setting=&settings.effects[4];graphics_toggles[1].setting=&settings.effects[3];
+    graphics_sliders[0].setting=&settings.graphics_ao_strength;graphics_sliders[1].setting=&settings.graphics_shadow_scale;
+    effect_toggles[0].setting=&settings.effects[2];effect_toggles[1].setting=&settings.effects[1];
+    effect_toggles[2].setting=&settings.effects[0];effect_toggles[3].setting=&settings.graphics_vignette;
+    effect_sliders[0].setting=&settings.graphics_bloom;effect_sliders[1].setting=&settings.graphics_saturation;
+    enhancements[0].setting=&settings.change_appearance;
+    enhancements[1].setting=&settings.rebirth;
+    enhancements[2].setting=&settings.camera_controls;
     camera[0].setting=&settings.camera_fov_scale;
     camera[1].setting=&settings.camera_distance_scale;
     camera[2].setting=&settings.camera_height_scale;
@@ -381,18 +486,39 @@ bool Install(std::uint8_t* image,std::size_t size) {
     std::memcpy(p,&target,8); p+=8; *p++=0x41; *p++=0xff; *p=0xe3;
     const std::int32_t to_pad=pad-(call+5); std::memcpy(image+call+1,&to_pad,4);
     g_installed=true;
-    host_log("pc-options: native System -> PC Camera installed (%u local assets)",installed);
+    host_log("pc-options: native System pages installed (%u local assets): Enhancements%s%s",installed,graphics_page?", Graphics / Effects":"",camera_page?", Camera":"");
     return true;
 }
 void Tick() {
-    if (!g_installed || !seeded) return;
+    if (!g_installed) return;
     bool changed=false;
     for (auto& s:camera) {
+        if (!seeded) break;
         if (s.value==s.last) continue;
         s.last=std::min<std::uint8_t>(s.value,10);
         *s.setting=s.base+s.last*s.step;
         changed=true;
     }
-    if (changed) { BbSettings::Save(); host_log("pc-options: camera changed in System; saved to bbport.ini"); }
+    if (enhancements_seeded) for (auto& t:enhancements) {
+        if (t.value==t.last) continue;
+        t.last=t.value;
+        *t.setting=t.value!=0;
+        changed=true;
+    }
+    auto push_sliders=[&](auto& rows,bool active) {
+        if (!active) return;
+        for (auto& s:rows) if (s.value!=s.last) { s.last=std::min<std::uint8_t>(s.value,10);*s.setting=s.base+s.last*s.step;changed=true; }
+    };
+    auto push_toggles=[&](auto& rows,bool active) {
+        if (!active) return;
+        for (auto& t:rows) if (t.value!=t.last) { t.last=t.value;*t.setting=t.value!=0;changed=true; }
+    };
+    push_sliders(graphics_sliders,graphics_seeded);push_sliders(effect_sliders,effects_seeded);
+    push_toggles(graphics_toggles,graphics_seeded);push_toggles(effect_toggles,effects_seeded);
+    if (graphics_seeded && output_resolution!=last_resolution) {
+        last_resolution=std::clamp(output_resolution,0,BbSettings::OutputCount-1);
+        BbSettings::Get().output_res=last_resolution;changed=true;
+    }
+    if (changed) { BbSettings::Save(); host_log("pc-options: System option changed; saved to bbport.ini"); }
 }
 } // namespace BbEngine::Options

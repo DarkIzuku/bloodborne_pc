@@ -86,4 +86,3 @@ bool locate(std::uint64_t man, std::uint32_t id, const Load& load, std::uint64_t
 }
 
 }  // namespace sprj_event_flag
-

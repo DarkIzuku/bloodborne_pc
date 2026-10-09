@@ -78,12 +78,28 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fsr4_invert_jitter = i != 0;
     } else if (key == "camera_controls") {
         v.camera_controls = i != 0;
+    } else if (key == "change_appearance") {
+        v.change_appearance = i != 0;
+    } else if (key == "rebirth") {
+        v.rebirth = i != 0;
     } else if (key == "camera_fov_scale") {
         v.camera_fov_scale = Clamp(std::isfinite(f) ? f : 1.0f, 1.0f, 1.5f);
     } else if (key == "camera_distance_scale") {
         v.camera_distance_scale = Clamp(std::isfinite(f) ? f : 1.0f, 0.5f, 1.5f);
     } else if (key == "camera_height_scale") {
         v.camera_height_scale = Clamp(std::isfinite(f) ? f : 1.0f, 0.5f, 1.5f);
+    } else if (key == "graphics_controls") {
+        v.graphics_controls=i!=0;
+    } else if (key == "graphics_vignette") {
+        v.graphics_vignette=i!=0;
+    } else if (key == "graphics_ao_strength") {
+        v.graphics_ao_strength=Clamp(std::isfinite(f)?f:1.0f,0.0f,2.0f);
+    } else if (key == "graphics_shadow_scale") {
+        v.graphics_shadow_scale=Clamp(std::isfinite(f)?f:1.0f,1.0f,3.0f);
+    } else if (key == "graphics_bloom") {
+        v.graphics_bloom=Clamp(std::isfinite(f)?f:1.0f,0.0f,1.0f);
+    } else if (key == "graphics_saturation") {
+        v.graphics_saturation=Clamp(std::isfinite(f)?f:1.0f,0.0f,2.0f);
     } else if (key == "model_lod") {
         v.model_lod = std::clamp(i, -2, 2);
     } else if (key == "fullscreen") {
@@ -251,7 +267,15 @@ void Save() {
         put(Effects[e].key, flag(v.effects[e]));
     }
     put("fullscreen", flag(v.fullscreen));
+    put("graphics_controls",flag(v.graphics_controls));
+    put("graphics_vignette",flag(v.graphics_vignette));
+    put("graphics_ao_strength",fixed(v.graphics_ao_strength,2));
+    put("graphics_shadow_scale",fixed(v.graphics_shadow_scale,2));
+    put("graphics_bloom",fixed(v.graphics_bloom,2));
+    put("graphics_saturation",fixed(v.graphics_saturation,2));
     put("camera_controls", flag(v.camera_controls));
+    put("change_appearance", flag(v.change_appearance));
+    put("rebirth", flag(v.rebirth));
     put("camera_fov_scale", fixed(v.camera_fov_scale, 2));
     put("camera_distance_scale", fixed(v.camera_distance_scale, 2));
     put("camera_height_scale", fixed(v.camera_height_scale, 2));

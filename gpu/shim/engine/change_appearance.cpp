@@ -3,6 +3,10 @@
 #include "engine_hooks.h"
 #include "camera.h"
 #include "option_menu.h"
+#include "engine_state.h"
+#include "rebirth.h"
+#include "menu_memory.h"
+#include "graphics.h"
 #include "bbport_settings.h"
 #include "bbport_platform.h"
 #include <atomic>
@@ -18,26 +22,13 @@ extern "C" void runtime_file_unmount(const char*);
 
 namespace BbEngine {
 namespace {
-constexpr std::uint64_t kPreferredGuestSlide = 0x400000;
 constexpr std::uint8_t kStepPrologue[] = {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x53,0x50,0x4d,0x89,0xce,0x48,0x89,0xfb};
 constexpr std::uint8_t kFramePrologue[] = {0x55,0x48,0x89,0xe5,0x41,0x57,0x41,0x56,0x41,0x55,0x41,0x54,0x53,0x48,0x83,0xec,0x38};
-std::atomic<std::uint64_t> g_made{0};
 void Log(const char* format, ...) {
     std::fputs("Engine: ", stdout);
     va_list args; va_start(args, format); std::vprintf(format, args); va_end(args);
     std::putchar('\n');
 }
-std::int32_t* menu_step_count(std::uint64_t step) { return reinterpret_cast<std::int32_t*>(step + 8); }
-void menu_step_hold(std::uint64_t step) { ++*menu_step_count(step); }
-void menu_step_release(std::uint64_t step) {
-    if (--*menu_step_count(step) == 0) {
-        const auto vtable = *reinterpret_cast<std::uint64_t*>(step);
-        Call(*reinterpret_cast<std::uint64_t*>(vtable), step);
-    }
-}
-std::uint64_t menu_steps_take(int) { return g_made.exchange(0, std::memory_order_acq_rel); }
-bool world_player_block(std::uint32_t* block);
-
 // --- the editor's frame ----------------------------------------------------
 //
 // The list the talk command opens is character creation's Appearance list
@@ -155,25 +146,13 @@ void change_appearance_tick() {
 
 
 namespace {
-bool world_player_block(std::uint32_t* block) {
-    const auto man = rd64(slot(0x593e878));
-    const auto chr = man ? rd64(man + 0x60) : 0;
-    std::uint32_t value = 0xffffffff;
-    if (!chr || !BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(chr + 0x3f8), &value, sizeof value) ||
-        value == 0xffffffff) return false;
-    if (block) *block = value;
-    return true;
-}
-
 std::int64_t __attribute__((sysv_abi)) StepHook(std::uint64_t, const std::uint64_t* saved) {
-    if (saved[3] != kListType || !saved[2]) return 0;
-    char16_t name[sizeof(kListName) / sizeof(char16_t)]{};
-    if (BbPlatform::ReadProcessMemory(reinterpret_cast<void*>(saved[2]), name, sizeof name) &&
-        std::memcmp(name, kListName, sizeof name) == 0) g_made.store(saved[5], std::memory_order_release);
+    menu_steps_notify(saved);
     return 0;
 }
 std::int64_t __attribute__((sysv_abi)) FrameHook(std::uint64_t, const std::uint64_t*) {
     change_appearance_tick();
+    Rebirth::Tick();
     Options::Tick();
     Camera::Tick();
     return 0; // The established FPS++ implementation still runs, byte for byte.
@@ -184,7 +163,8 @@ void Install(std::uint8_t* image, std::size_t size) {
     const char* asset = std::getenv("BB_DREAM_MIRROR_ASSET");
     const char* identity = std::getenv("BB_ENGINE_IMAGE_SHA256");
     const bool mirror = asset && *asset;
-    if (!mirror && !BbSettings::Get().camera_controls) return;
+    const bool respec=std::getenv("BB_REBIRTH_ASSET");
+    if (!mirror && !respec && !BbSettings::Get().camera_controls && !BbSettings::Get().graphics_controls) return;
     if (!identity || std::strcmp(identity, "071df19c8880086d97182dbc057bc8cb37badaca57d9112683836b24a0444c0a")) {
         Log("mirror disabled: executable identity was not verified"); return;
     }
@@ -196,7 +176,7 @@ void Install(std::uint8_t* image, std::size_t size) {
         !std::filesystem::equivalent(resolved, std::filesystem::path(original) / "dvdroot_ps4/map/mapstudio/m21_00_00_00.msb.dcx", error))) {
         Log("mirror disabled: a user mod owns the Dream layout");
         asset = nullptr;
-        if (!BbSettings::Get().camera_controls) return;
+        if (!respec && !BbSettings::Get().camera_controls && !BbSettings::Get().graphics_controls) return;
     }
     Hook hooks[2];
     if (!Prepare(hooks[0], image, size, 0x1c1cce0, kStepPrologue, StepHook) ||
@@ -205,16 +185,23 @@ void Install(std::uint8_t* image, std::size_t size) {
         Log("mirror disabled: engine bytes differ or hook allocation failed"); return;
     }
     g_slide = reinterpret_cast<std::uint64_t>(image);
+    StateInitialize(g_slide);
     if (asset && std::filesystem::is_regular_file(asset, error) && !error && !runtime_file_mount(guest, asset)) {
-        g_watch = 0; g_frame_on = true;
+        g_watch = menu_steps_watch(kListType,kListName); g_frame_on = g_watch>=0;
         Log("Dream mirror enabled: native appearance editor and ChrMake_BG preview; %s", asset);
     }
     const bool camera = Camera::Install(image, size);
-    if (!g_frame_on && !camera) {
+    const bool graphics=Graphics::Install(image,size);
+    const bool menus=Options::Install(image,size);
+    if (!menus && g_frame_on && !MenuMemory::Install(image,size)) {
+        runtime_file_unmount(guest); g_frame_on=false;
+        Log("mirror disabled: native editor memory budget differs");
+    }
+    const bool rebirth=menus && Rebirth::Install(image,size);
+    if (!g_frame_on && !camera && !rebirth && !menus && !graphics) {
         for (auto& hook : hooks) Discard(hook);
         Log("engine enhancements disabled: no compatible feature could be prepared"); return;
     }
-    Options::Install(image,size);
     Commit(hooks);
 }
 } // namespace BbEngine

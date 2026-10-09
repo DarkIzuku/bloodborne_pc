@@ -292,6 +292,8 @@ target_compile_options(engine-hooks-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(engine-hooks-test PRIVATE ..)
 # Local game-derived native menu assets. No game data is embedded in this tool.
 find_package(ZLIB REQUIRED)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/../tools/engine/pc_option_messages.tsv)
 file(READ ${CMAKE_CURRENT_SOURCE_DIR}/../tools/engine/pc_option_messages.tsv BB_ENGINE_MESSAGES)
 file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/include/pc_option_messages.inc "R\"tsv(${BB_ENGINE_MESSAGES})tsv\"\n")
 add_executable(bb-engine-assets ../tools/engine/menu_assets.cpp ../tools/engine/esd.cpp ../tools/engine/rebirth_script.cpp ../tools/engine/sha256.cpp)

@@ -32,7 +32,7 @@
 110010	PC Effects	Post-processing: blur, bloom, vignette and lens effects.
 110011	PC Camera	The follow camera: field of view, distance and height.
 110012	Steam Deck	Frame rate and model detail for the Steam Deck.
-110013	PC Enhancements	Additions to the game: the mirror, rebirth, five players. Each needs a restart.
+110013	PC Enhancements	Enable the mirror, rebirth and PC Camera controls. Each needs a restart.
 116000	Vertical Sync	Wait for the display. Off can tear.
 116001	Fullscreen	Borderless, at the desktop resolution.
 116002	Mouse in Menus	Move and click to select.
@@ -48,11 +48,11 @@
 116034	144	
 116035	Unlimited	
 117000	Ambient Occlusion	Screen-space ambient occlusion.
-117005	Motion Blur	The blur on fast camera and character movement.
+117005	Motion Blur	The blur on fast camera and character movement. Requires a restart in this renderer.
 117001	Anti-Aliasing	The game's own anti-aliasing pass.
-117002	Depth of Field	Blurs distant scenery. Off keeps far views sharp.
+117002	Depth of Field	Blurs distant scenery. Off keeps far views sharp. Requires a restart in this renderer.
 117020	PC Graphics	
-117003	Chromatic Aberration	The colour fringing at the edges of the frame.
+117003	Chromatic Aberration	The colour fringing at the edges of the frame. Requires a restart in this renderer.
 117006	Shadow Distance	How far sun and moon shadows reach. 0 is the game's own.
 117007	AO Strength	How dark corners and contact get. 5 is the game's own.
 117008	Fog	How thick the haze over distant streets is. 10 is the game's own.
@@ -63,7 +63,7 @@
 121020	PC Camera	
 121000	Camera Distance	How far behind the character the camera sits. 5 is the game's own.
 121001	Camera Height	How high above the character the camera looks. 5 is the game's own.
-117004	Resolution	What the game renders at (it shipped at 1920x1080). Wide and 16:10 screens are filled, the HUD kept 16:9 in the middle. Changes at once and asks to be kept - the largest may wait for the next start.
+117004	Output Resolution	Existing upscaler output setting. Restart required unless Live Resolution is enabled.
 117010	1280x720
 117011	1600x900
 117012	1920x1080
@@ -109,6 +109,7 @@
 124020	PC Enhancements	
 124001	Hunter's Dream Mirror	Requires a restart. The Dream's mirror opens the appearance editor (the unused "Put on Disguise").
 124002	Rebirth at the Altar	Requires a restart. With the Yharnam Stone, the Altar of Despair resets level and attributes.
+124004	PC Camera Controls	Requires a restart. Adds System > PC Camera with field of view, camera distance and height.
 124003	Five Players	Requires a restart. Two invaders in Mensis, Mergo's Loft, the Frontier and the DLC; all players need it.
 920000	Keep this resolution?\nIt goes back in 10 seconds unless you choose YES.	
 920001	Quit the game and return to the desktop?	
