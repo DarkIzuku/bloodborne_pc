@@ -39,6 +39,13 @@ public partial class MainWindow : Window
         public string CameraDistance { get; set; } = "1.00";
         public string CameraHeight { get; set; } = "1.00";
         public bool ChangeAppearance { get; set; }
+        public bool Rebirth { get; set; }
+        public bool GraphicsControls { get; set; }
+        public bool GraphicsVignette { get; set; } = true;
+        public string GraphicsAo { get; set; } = "1.00";
+        public string GraphicsShadows { get; set; } = "1.00";
+        public string GraphicsBloom { get; set; } = "1.00";
+        public string GraphicsSaturation { get; set; } = "1.00";
         public bool SkipIntro { get; set; }
         public int GamepadIndex { get; set; }
         public bool ModsEnabled { get; set; } = true;
@@ -61,6 +68,7 @@ public partial class MainWindow : Window
         statePath = Path.Combine(root, "launcher-settings.json");
         ModsFolderText.Text = Path.Combine(root, "mods");
         ConfigureCameraChoices();
+        ConfigureGraphicsChoices();
         LoadState();
         ApplyStateToUi();
         InitializePresentation();
@@ -97,6 +105,21 @@ public partial class MainWindow : Window
         state.Fps = NormalizeFps(state.Fps);
         string? mirror = ReadIniValue("change_appearance");
         if (mirror != null) state.ChangeAppearance = mirror == "1";
+        string? rebirth = ReadIniValue("rebirth");
+        if (rebirth != null) state.Rebirth = rebirth == "1";
+        if (ReadIniValue("graphics_controls") is string graphics) state.GraphicsControls = graphics == "1";
+        if (ReadIniValue("graphics_vignette") is string vignette) state.GraphicsVignette = vignette == "1";
+        state.GraphicsAo = GraphicsScale(ReadIniValue("graphics_ao_strength") ?? state.GraphicsAo, 0, 2);
+        state.GraphicsShadows = GraphicsScale(ReadIniValue("graphics_shadow_scale") ?? state.GraphicsShadows, 1, 3);
+        state.GraphicsBloom = GraphicsScale(ReadIniValue("graphics_bloom") ?? state.GraphicsBloom, 0, 1);
+        state.GraphicsSaturation = GraphicsScale(ReadIniValue("graphics_saturation") ?? state.GraphicsSaturation, 0, 2);
+        // Native pages and the legacy overlay use this same configuration.
+        if (ReadIniValue("output_res") is string output) state.Resolution = output;
+        if (ReadIniValue("effect_game_aa") is string aa) state.GameAa = aa == "1";
+        if (ReadIniValue("effect_ssao") is string ssao) state.Ssao = ssao == "1";
+        if (ReadIniValue("effect_dof") is string dof) state.Dof = dof == "1";
+        if (ReadIniValue("effect_motion_blur") is string blur) state.MotionBlur = blur == "1";
+        if (ReadIniValue("effect_chromatic_aberration") is string ca) state.Chromatic = ca == "1";
         string? camera = ReadIniValue("camera_controls");
         if (camera != null) state.CameraControls = camera == "1";
         state.CameraFov = CameraScale(ReadIniValue("camera_fov_scale") ?? state.CameraFov, 1);
@@ -122,6 +145,20 @@ public partial class MainWindow : Window
             }
     }
 
+    static string GraphicsScale(string? text, double min, double max)
+    {
+        if (!double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) || !double.IsFinite(value)) value = 1;
+        return Math.Clamp(value, min, max).ToString("0.00", CultureInfo.InvariantCulture);
+    }
+    void ConfigureGraphicsChoices()
+    {
+        foreach (var (box, min, step) in new[] { (GraphicsAoCombo, 0.0, 0.2), (GraphicsShadowsCombo, 1.0, 0.2), (GraphicsBloomCombo, 0.0, 0.1), (GraphicsSaturationCombo, 0.0, 0.2) })
+            for (int i = 0; i <= 10; i++)
+            {
+                double value = min + i * step;
+                box.Items.Add(new ComboBoxItem { Tag = value.ToString("0.00", CultureInfo.InvariantCulture), Content = $"{value * 100:0}%" });
+            }
+    }
     static void SetCameraScale(ComboBox box, string value)
     {
         // Preserve an intermediate scale saved by the in-game slider.
@@ -173,6 +210,13 @@ public partial class MainWindow : Window
         SsrCheck.IsChecked = state.Ssr;
         SkipIntroCheck.IsChecked = state.SkipIntro;
         ChangeAppearanceCheck.IsChecked = state.ChangeAppearance;
+        RebirthCheck.IsChecked = state.Rebirth;
+        GraphicsControlsCheck.IsChecked = state.GraphicsControls;
+        GraphicsVignetteCheck.IsChecked = state.GraphicsVignette;
+        SetCameraScale(GraphicsAoCombo, state.GraphicsAo);
+        SetCameraScale(GraphicsShadowsCombo, state.GraphicsShadows);
+        SetCameraScale(GraphicsBloomCombo, state.GraphicsBloom);
+        SetCameraScale(GraphicsSaturationCombo, state.GraphicsSaturation);
         CameraControlsCheck.IsChecked = state.CameraControls;
         SetCameraScale(CameraFovCombo, state.CameraFov);
         SetCameraScale(CameraDistanceCombo, state.CameraDistance);
@@ -211,6 +255,13 @@ public partial class MainWindow : Window
         state.Ssr = SsrCheck.IsChecked == true;
         state.SkipIntro = SkipIntroCheck.IsChecked == true;
         state.ChangeAppearance = ChangeAppearanceCheck.IsChecked == true;
+        state.Rebirth = RebirthCheck.IsChecked == true;
+        state.GraphicsControls = GraphicsControlsCheck.IsChecked == true;
+        state.GraphicsVignette = GraphicsVignetteCheck.IsChecked == true;
+        state.GraphicsAo = ComboTag(GraphicsAoCombo);
+        state.GraphicsShadows = ComboTag(GraphicsShadowsCombo);
+        state.GraphicsBloom = ComboTag(GraphicsBloomCombo);
+        state.GraphicsSaturation = ComboTag(GraphicsSaturationCombo);
         state.CameraControls = CameraControlsCheck.IsChecked == true;
         state.CameraFov = CameraScale(ComboTag(CameraFovCombo), 1);
         state.CameraDistance = CameraScale(ComboTag(CameraDistanceCombo), 0.5);
@@ -251,6 +302,13 @@ public partial class MainWindow : Window
             ["effect_ssr"] = state.Ssr ? "1" : "0",
             ["skip_intro"] = state.SkipIntro ? "1" : "0",
             ["change_appearance"] = state.ChangeAppearance ? "1" : "0",
+            ["rebirth"] = state.Rebirth ? "1" : "0",
+            ["graphics_controls"] = state.GraphicsControls ? "1" : "0",
+            ["graphics_vignette"] = state.GraphicsVignette ? "1" : "0",
+            ["graphics_ao_strength"] = state.GraphicsAo,
+            ["graphics_shadow_scale"] = state.GraphicsShadows,
+            ["graphics_bloom"] = state.GraphicsBloom,
+            ["graphics_saturation"] = state.GraphicsSaturation,
             ["camera_controls"] = state.CameraControls ? "1" : "0",
             ["camera_fov_scale"] = state.CameraFov,
             ["camera_distance_scale"] = state.CameraDistance,

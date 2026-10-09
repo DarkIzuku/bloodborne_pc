@@ -107,6 +107,11 @@ static class Program
         Get<CheckBox>("FullscreenCheck").IsChecked=false; Check(Get<ComboBox>("QuickDisplay").SelectedIndex==1,"Display sync to quick");
         Get<ComboBox>("QuickDisplay").SelectedIndex=0; Check(Get<CheckBox>("FullscreenCheck").IsChecked==true,"Display sync from quick");
         Select("CameraFovCombo","1.25"); Select("CameraDistanceCombo","0.80"); Select("CameraHeightCombo","1.20");
+        Select("GraphicsAoCombo","0.40"); Select("GraphicsShadowsCombo","1.40");
+        Select("GraphicsBloomCombo","0.80"); Select("GraphicsSaturationCombo","1.20");
+        Get<CheckBox>("RebirthCheck").IsChecked=true;
+        Get<CheckBox>("GraphicsControlsCheck").IsChecked=true;
+        Get<CheckBox>("GraphicsVignetteCheck").IsChecked=false;
         Select("UpscalerCombo","fsr411"); Select("PresetCombo","3"); Select("FpsCombo","90"); Select("LanguageCombo","3");
         Select("PresentCombo","FifoRelaxed"); Select("LiveResolutionCombo","auto"); Select("ModelLodCombo","-2");
         Get<ComboBox>("ResolutionCombo").SelectedIndex=2; Get<ComboBox>("ControllerCombo").SelectedIndex=2;
@@ -114,6 +119,8 @@ static class Program
         foreach(var name in new[]{"ChromaticCheck","DofCheck","MotionBlurCheck","SsaoCheck","GameAaCheck","ShadowsCheck","ModsEnabledCheck"}) Get<CheckBox>(name).IsChecked=false;
         Call("SaveSettings");
         string ini=File.ReadAllText(Path.Combine(root,"bbport.ini"));
+        foreach(var expected in new[]{"rebirth=1","graphics_controls=1","graphics_vignette=0","graphics_ao_strength=0.40","graphics_shadow_scale=1.40","graphics_bloom=0.80","graphics_saturation=1.20"})
+            Check(ini.Split("\r\n").Contains(expected),"Native engine option "+expected);
         foreach(var expected in new[]{"# keep this comment","unrelated_setting=keep","upscaler=fsr411","preset=3","sharpen=1","show_fps=1","output_res=2560x1440","fullscreen=1","live_resolution=auto","model_lod=-2","effect_chromatic_aberration=0","effect_dof=0","effect_motion_blur=0","effect_ssao=0","effect_game_aa=0","effect_dynamic_shadows=0","effect_ssr=1","skip_intro=1","change_appearance=1","camera_controls=1","camera_fov_scale=1.25","camera_distance_scale=0.80","camera_height_scale=1.20"}) Check(ini.Split("\r\n").Contains(expected),"INI "+expected);
         using(var json=JsonDocument.Parse(File.ReadAllText(Path.Combine(root,"launcher-settings.json")))) {
             Check(json.RootElement.GetProperty("GamePath").GetString()==game,"JSON game path");
@@ -185,6 +192,12 @@ static class Program
         File.WriteAllText(Path.Combine(root,"bbport.ini"),cameraIni.Replace("camera_fov_scale=1.25","camera_fov_scale=1.23"));
         Call("LoadState"); Call("ApplyStateToUi");
         Check(Tag("CameraFovCombo")=="1.23","Preserve in-game intermediate FOV");
+        Check(Get<CheckBox>("RebirthCheck").IsChecked==true && Get<CheckBox>("GraphicsControlsCheck").IsChecked==true,"Enhancements reload from INI");
+        Check(Tag("GraphicsAoCombo")=="0.40" && Tag("GraphicsShadowsCombo")=="1.40" && Tag("GraphicsBloomCombo")=="0.80" && Tag("GraphicsSaturationCombo")=="1.20","Live graphics values reload");
+        string runtimeIni=File.ReadAllText(Path.Combine(root,"bbport.ini"));
+        File.WriteAllText(Path.Combine(root,"bbport.ini"),runtimeIni.Replace("graphics_bloom=0.80","graphics_bloom=0.60").Replace("rebirth=1","rebirth=0").Replace("effect_ssao=0","effect_ssao=1"));
+        Call("LoadState"); Call("ApplyStateToUi");
+        Check(Tag("GraphicsBloomCombo")=="0.60" && Get<CheckBox>("RebirthCheck").IsChecked==false && Get<CheckBox>("SsaoCheck").IsChecked==true,"Native pages remain authoritative over stale launcher JSON");
         Console.WriteLine($"PASS: {assertions} assertions; settings, navigation, all quick options, launch environment and artwork.");
         window.Close(); app.Shutdown();
     }

@@ -311,7 +311,19 @@
                                 <StackPanel>
                                     <TextBlock Style="{StaticResource SectionTitle}" Text="PC ENHANCEMENTS" />
                                     <CheckBox x:Name="ChangeAppearanceCheck" Content="Hunter's Dream mirror: edit appearance" />
-                                    <TextBlock Text="Use the mirror inside the workshop to open the game's appearance editor. Applies on the next launch." Foreground="#9CA3A9" TextWrapping="Wrap" Margin="0,8,0,0" />
+                                    <CheckBox x:Name="RebirthCheck" Content="Altar of Despair: reset attributes" Margin="0,10,0,0" />
+                                    <TextBlock Text="Mirror: edit appearance in the Dream workshop. Altar: requires the Yharnam Stone; refunds Blood Echoes and offers Undo. Apply on the next launch." Foreground="#9CA3A9" TextWrapping="Wrap" Margin="0,8,0,0" />
+
+                                    <TextBlock Style="{StaticResource SectionTitle}" Text="PC GRAPHICS / EFFECTS" Margin="0,20,0,10" />
+                                    <CheckBox x:Name="GraphicsControlsCheck" Content="Enable bbhost live graphics controls" />
+                                    <UniformGrid Columns="2" Margin="0,12,0,0">
+                                        <StackPanel Margin="0,0,12,10"><TextBlock Text="Ambient occlusion strength" /><ComboBox x:Name="GraphicsAoCombo" AutomationProperties.Name="Ambient occlusion strength" Margin="0,6,0,0" /></StackPanel>
+                                        <StackPanel Margin="0,0,0,10"><TextBlock Text="Shadow distance" /><ComboBox x:Name="GraphicsShadowsCombo" AutomationProperties.Name="Shadow distance" Margin="0,6,0,0" /></StackPanel>
+                                        <StackPanel Margin="0,0,12,0"><TextBlock Text="Bloom" /><ComboBox x:Name="GraphicsBloomCombo" AutomationProperties.Name="Bloom strength" Margin="0,6,0,0" /></StackPanel>
+                                        <StackPanel><TextBlock Text="Saturation" /><ComboBox x:Name="GraphicsSaturationCombo" AutomationProperties.Name="Color saturation" Margin="0,6,0,0" /></StackPanel>
+                                    </UniformGrid>
+                                    <CheckBox x:Name="GraphicsVignetteCheck" Content="Vignette" Margin="0,12,0,0" />
+                                    <TextBlock Text="100% preserves the area settings. Adds System → PC Graphics / PC Effects. AA, SSAO and these controls apply live; motion blur, DoF and chromatic aberration retain the existing startup patches." Foreground="#9CA3A9" TextWrapping="Wrap" Margin="0,8,0,0" />
                                     <TextBlock Style="{StaticResource SectionTitle}" Text="PC CAMERA" Margin="0,20,0,10" />
                                     <CheckBox x:Name="CameraControlsCheck" Content="Enable camera adjustments" />
                                     <UniformGrid Columns="3" Margin="0,12,0,0">
