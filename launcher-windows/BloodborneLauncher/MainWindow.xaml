@@ -307,6 +307,13 @@
                                     </ComboBox>
                                 </StackPanel>
                             </Border>
+                            <Border Style="{StaticResource CardStyle}" Margin="0,16,0,0">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource SectionTitle}" Text="PC ENHANCEMENTS" />
+                                    <CheckBox x:Name="ChangeAppearanceCheck" Content="Hunter's Dream mirror: edit appearance" />
+                                    <TextBlock Text="Use the mirror inside the workshop to open the game's appearance editor. Applies on the next launch." Foreground="#9CA3A9" TextWrapping="Wrap" Margin="0,8,0,0" />
+                                </StackPanel>
+                            </Border>
                         </StackPanel>
                     </ScrollViewer>
                     <!-- GRAPHICS -->

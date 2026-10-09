@@ -15,6 +15,8 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
+import struct
+import zlib
 from mods import remove_overlay
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -134,6 +136,18 @@ def main():
         for script, extra in (('prepare.py', []), ('link_libc.py', []), ('link_modules.py', []),
                               ('content_profile.py', ['--sku', os.environ.get('BB_CONTENT_SKU', 'full')])):
             run([PYTHON, SCRIPTS / script, merged, '--out', out, *extra])
+        # Engine features are prepared locally and only mounted after runtime byte checks.
+        for key in ('BB_DREAM_MIRROR_ASSET', 'BB_ENGINE_IMAGE_SHA256'):
+            os.environ.pop(key, None)
+        if settings_value(config, 'change_appearance') == '1':
+            try:
+                from engine_assets import prepare_mirror, IMAGE_SHA
+                asset = prepare_mirror(merged, out / 'eboot.elf', data / 'engine-assets')
+                os.environ['BB_DREAM_MIRROR_ASSET'] = str(asset)
+                os.environ['BB_ENGINE_IMAGE_SHA256'] = IMAGE_SHA
+                print(f'Engine: Dream mirror prepared locally: {asset}', flush=True)
+            except (OSError, ValueError, IndexError, struct.error, zlib.error) as error:
+                print(f'Engine: Dream mirror disabled: {error}', flush=True)
         # Sizes chosen below for the previous launch are recomputed after an in-game restart.
         if os.environ.get('BB_AUTO_RENDER_RES') == '1':
             for key in ('BB_RENDER_RES', 'BB_OUTPUT_RES', 'BB_AUTO_RENDER_RES'):

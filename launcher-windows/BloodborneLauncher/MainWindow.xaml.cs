@@ -33,6 +33,7 @@ public partial class MainWindow : Window
         public bool GameAa { get; set; } = true;
         public bool Shadows { get; set; } = true;
         public bool Ssr { get; set; }
+        public bool ChangeAppearance { get; set; }
         public bool SkipIntro { get; set; }
         public int GamepadIndex { get; set; }
         public bool ModsEnabled { get; set; } = true;
@@ -88,9 +89,23 @@ public partial class MainWindow : Window
         catch { state = new(); }
         // Migrate retired or malformed frame-rate selections before displaying or launching.
         state.Fps = NormalizeFps(state.Fps);
+        string? mirror = ReadIniValue("change_appearance");
+        if (mirror != null) state.ChangeAppearance = mirror == "1";
     }
 
     static string NormalizeFps(string? value) => value is "30" or "60" or "90" ? value : "60";
+
+    string? ReadIniValue(string key)
+    {
+        string path = Path.Combine(root, "bbport.ini");
+        if (!File.Exists(path)) return null;
+        foreach (string line in File.ReadLines(path))
+        {
+            int equals = line.IndexOf('=');
+            if (equals > 0 && line[..equals].Trim() == key) return line[(equals + 1)..].Trim();
+        }
+        return null;
+    }
 
     void ApplyStateToUi()
     {
@@ -122,6 +137,7 @@ public partial class MainWindow : Window
         ShadowsCheck.IsChecked = state.Shadows;
         SsrCheck.IsChecked = state.Ssr;
         SkipIntroCheck.IsChecked = state.SkipIntro;
+        ChangeAppearanceCheck.IsChecked = state.ChangeAppearance;
 
         ControllerCombo.SelectedIndex = Math.Clamp(state.GamepadIndex, 0, 3);
         ModsEnabledCheck.IsChecked = state.ModsEnabled;
@@ -155,6 +171,7 @@ public partial class MainWindow : Window
         state.Shadows = ShadowsCheck.IsChecked == true;
         state.Ssr = SsrCheck.IsChecked == true;
         state.SkipIntro = SkipIntroCheck.IsChecked == true;
+        state.ChangeAppearance = ChangeAppearanceCheck.IsChecked == true;
         state.GamepadIndex = Math.Max(0, ControllerCombo.SelectedIndex);
         state.ModsEnabled = ModsEnabledCheck.IsChecked == true;
         state.DeveloperMode = DeveloperModeCheck.IsChecked == true;
@@ -189,7 +206,8 @@ public partial class MainWindow : Window
             ["effect_game_aa"] = state.GameAa ? "1" : "0",
             ["effect_dynamic_shadows"] = state.Shadows ? "1" : "0",
             ["effect_ssr"] = state.Ssr ? "1" : "0",
-            ["skip_intro"] = state.SkipIntro ? "1" : "0"
+            ["skip_intro"] = state.SkipIntro ? "1" : "0",
+            ["change_appearance"] = state.ChangeAppearance ? "1" : "0"
         };
         RewriteIni(Path.Combine(root, "bbport.ini"), ini);
         FooterMessage.Text = "Settings saved";

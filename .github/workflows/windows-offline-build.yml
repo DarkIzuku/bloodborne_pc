@@ -9,6 +9,7 @@ on:
       - offline-performance-precache-buildcheck
       - upstream-0.3-core-port
       - upstream-0.4-core-port
+      - bbhost-enhancements-v1
     paths:
       - "src/**"
       - "gpu/**"
@@ -79,7 +80,7 @@ jobs:
         shell: msys2 {0}
         run: |
           set -e
-          ninja -C out/gpu pipeline-cache-blob-test pipeline-archive-test motion-history-test motion-shader-test image-overlap-test settings-test ui-composition-test
+          ninja -C out/gpu pipeline-cache-blob-test pipeline-archive-test motion-history-test motion-shader-test image-overlap-test settings-test ui-composition-test engine-hooks-test
           out/gpu/pipeline-cache-blob-test.exe
           out/gpu/pipeline-archive-test.exe
           out/gpu/motion-history-test.exe
@@ -87,6 +88,7 @@ jobs:
           out/gpu/image-overlap-test.exe
           out/gpu/settings-test.exe
           out/gpu/ui-composition-test.exe
+          out/gpu/engine-hooks-test.exe
 
       - name: Verify preparation, patches, and mod safety
         shell: msys2 {0}
@@ -95,6 +97,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_patches.py'
           python -m unittest discover -s tests -p 'test_game_check.py'
           python -m unittest discover -s tests -p 'test_windows_frame_rate.py'
+          python -m unittest discover -s tests -p 'test_engine_assets.py'
           python -m unittest discover -s tests -p 'test_upscaler_assets.py'
           python -m unittest discover -s tests -p 'test_fsr4cap_dll_info.py'
 
@@ -156,6 +159,7 @@ jobs:
           test ! -d patches || cp -rf patches/* package/patches/
           test ! -d fsr4_shaders || cp -rf fsr4_shaders package/
           test ! -f LICENSE || cp -f LICENSE package/
+          test ! -d licenses || cp -rf licenses package/
           test ! -f README.md || cp -f README.md package/
           copy_deps() { local exe="$1"; ldd "$exe" 2>/dev/null | awk '{print $3}' | grep -E '^/[A-Za-z]/msys64/clang64/bin/.*\.dll$|^/clang64/bin/.*\.dll$' || true; }
           for exe in out/bb-probe.exe out/bb-gpu-capabilities.exe; do
