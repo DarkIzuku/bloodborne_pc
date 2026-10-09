@@ -167,6 +167,8 @@ jobs:
           test ! -d fsr4_shaders || cp -rf fsr4_shaders package/
           test ! -f LICENSE || cp -f LICENSE package/
           test ! -d licenses || cp -rf licenses package/
+          mkdir -p package/licenses/msys2
+          cp -rf /clang64/share/licenses/. package/licenses/msys2/
           test ! -f README.md || cp -f README.md package/
           copy_deps() { local exe="$1"; ldd "$exe" 2>/dev/null | awk '{print $3}' | grep -E '^/[A-Za-z]/msys64/clang64/bin/.*\.dll$|^/clang64/bin/.*\.dll$' || true; }
           for exe in out/bb-probe.exe out/bb-gpu-capabilities.exe out/bb-engine-assets.exe; do
