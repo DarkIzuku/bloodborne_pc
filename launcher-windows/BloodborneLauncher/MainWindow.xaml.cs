@@ -34,6 +34,14 @@ public partial class MainWindow : Window
         public bool GameAa { get; set; } = true;
         public bool Shadows { get; set; } = true;
         public bool Ssr { get; set; }
+        public bool PcControls {get;set;}=true;
+        public bool Widescreen {get;set;}=true;
+        public bool MouseCamera {get;set;}=true;
+        public bool MouseMenu {get;set;}=true;
+        public bool MouseInvertX {get;set;}
+        public bool MouseInvertY {get;set;}
+        public bool MouseAutoRotation {get;set;}
+        public int MouseSensitivity {get;set;}=5;
         public bool CameraControls { get; set; }
         public string CameraFov { get; set; } = "1.00";
         public string CameraDistance { get; set; } = "1.00";
@@ -71,6 +79,7 @@ public partial class MainWindow : Window
     readonly string statePath;
     LauncherState state = new();
     bool syncing;
+    bool gameRunning;
 
     public MainWindow()
     {
@@ -136,6 +145,7 @@ public partial class MainWindow : Window
         state.CameraFov = CameraScale(ReadIniValue("camera_fov_scale") ?? state.CameraFov, 1);
         state.CameraDistance = CameraScale(ReadIniValue("camera_distance_scale") ?? state.CameraDistance, 0.5);
         state.CameraHeight = CameraScale(ReadIniValue("camera_height_scale") ?? state.CameraHeight, 0.5);
+        LoadInputState();
         LoadOnlineState();
     }
 
@@ -223,6 +233,7 @@ public partial class MainWindow : Window
         SkipIntroCheck.IsChecked = state.SkipIntro;
         ChangeAppearanceCheck.IsChecked = state.ChangeAppearance;
         RebirthCheck.IsChecked = state.Rebirth;
+        ApplyInputUi();
         GraphicsControlsCheck.IsChecked = state.GraphicsControls;
         GraphicsVignetteCheck.IsChecked = state.GraphicsVignette;
         SetCameraScale(GraphicsAoCombo, state.GraphicsAo);
@@ -286,6 +297,7 @@ public partial class MainWindow : Window
         state.FrameStats = FrameStatsCheck.IsChecked == true;
         state.AudioStats = AudioStatsCheck.IsChecked == true;
         state.FsrProfile = FsrProfileCheck.IsChecked == true;
+        CollectInputUi();
         CollectOnlineUi();
     }
 
@@ -330,6 +342,7 @@ public partial class MainWindow : Window
             ["camera_distance_scale"] = state.CameraDistance,
             ["camera_height_scale"] = state.CameraHeight
         };
+        SaveInputSettings(ini);
         RewriteIni(Path.Combine(root, "bbport.ini"), ini);
         SaveOnlineSettings();
         FooterMessage.Text = "Settings saved";
@@ -491,6 +504,7 @@ public partial class MainWindow : Window
 
     void Play_Click(object sender, RoutedEventArgs e)
     {
+        if(gameRunning) return;
         if (!SaveSettings()) return;
         if (!ValidateOnlineForLaunch()) return;
         if (!File.Exists(Path.Combine(state.GamePath, "eboot.bin")))
@@ -549,6 +563,7 @@ public partial class MainWindow : Window
             {
                 Dispatcher.BeginInvoke(() =>
                 {
+                    gameRunning=false;
                     Show();
                     WindowState = WindowState.Normal;
                     LoadState();
@@ -558,12 +573,16 @@ public partial class MainWindow : Window
                     gameProcess.Dispose();
                 });
             };
-            gameProcess.Start();
+            gameRunning=true;
+            PlayButton.IsEnabled=false;
+            if(!gameProcess.Start()) throw new InvalidOperationException("No se pudo iniciar el juego.");
             FooterMessage.Text = $"Started · log: {Path.GetFileName(logPath)}";
             Hide();
         }
         catch (Exception ex)
         {
+            gameRunning=false;
+            RefreshStatus();
             MessageBox.Show(ex.Message, "Unable to start Bloodborne", MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }

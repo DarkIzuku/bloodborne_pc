@@ -233,6 +233,12 @@
                                                     <ComboBoxItem Content="1920x1080" />
                                                     <ComboBoxItem Content="2560x1440" />
                                                     <ComboBoxItem Content="3840x2160" />
+                                            <ComboBoxItem Content="2560x1080" />
+                                            <ComboBoxItem Content="3440x1440" />
+                                            <ComboBoxItem Content="3840x1600" />
+                                            <ComboBoxItem Content="3840x1080" />
+                                            <ComboBoxItem Content="5120x1440" />
+                                            <ComboBoxItem Content="5120x2160" />
                                                 </ComboBox>
                                             </StackPanel>
                                         </Border>
@@ -356,6 +362,12 @@
                                             <ComboBoxItem Content="1920x1080" />
                                             <ComboBoxItem Content="2560x1440" />
                                             <ComboBoxItem Content="3840x2160" />
+                                            <ComboBoxItem Content="2560x1080" />
+                                            <ComboBoxItem Content="3440x1440" />
+                                            <ComboBoxItem Content="3840x1600" />
+                                            <ComboBoxItem Content="3840x1080" />
+                                            <ComboBoxItem Content="5120x1440" />
+                                            <ComboBoxItem Content="5120x2160" />
                                         </ComboBox>
                                         <TextBlock Text="Present mode" />
                                         <ComboBox x:Name="PresentCombo" AutomationProperties.Name="Present mode" Margin="0,6,0,12">
@@ -364,6 +376,7 @@
                                             <ComboBoxItem Content="FIFO Relaxed" Tag="FifoRelaxed" />
                                             <ComboBoxItem Content="Immediate (tearing)" Tag="Immediate" />
                                         </ComboBox>
+                                        <CheckBox x:Name="WidescreenCheck" Content="Widescreen: cámara y HUD con proporciones correctas (21:9 / 32:9)" Margin="0,0,0,10" />
                                         <CheckBox x:Name="FullscreenCheck" Content="Borderless fullscreen" />
                                         <CheckBox x:Name="ShowFpsCheck" Content="Show FPS counter" />
                                     </StackPanel>
@@ -443,8 +456,8 @@
                     <!-- CONTROLLER -->
                     <ScrollViewer x:Name="ControllerPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel Margin="34,30" MaxWidth="1050" HorizontalAlignment="Stretch">
-                            <TextBlock Text="Controller" FontFamily="Georgia" FontSize="32" />
-                            <TextBlock Text="Choose the controller for your next session" Foreground="#B0A89C" Margin="0,4,0,24" />
+                            <TextBlock Text="Controles" FontFamily="Georgia" FontSize="32" />
+                            <TextBlock Text="Teclado, ratón y mando. También puedes cambiar las teclas desde System → Key Bindings." Foreground="#B0A89C" Margin="0,4,0,24" />
                             <Border Style="{StaticResource CardStyle}">
                                 <StackPanel>
                                     <TextBlock Style="{StaticResource SectionTitle}" Text="ACTIVE CONTROLLER" />
@@ -455,6 +468,40 @@
                                         <ComboBoxItem Content="Gamepad 4" Tag="3" />
                                     </ComboBox>
                                     <TextBlock TextWrapping="Wrap" Text="Controller detection remains automatic when devices are connected." Foreground="#AFA69A" Margin="0,10,0,0" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource CardStyle}" Margin="0,18,0,18">
+                                <StackPanel>
+                                    <TextBlock Text="TECLADO Y RATÓN" Style="{StaticResource SectionTitle}" />
+                                    <CheckBox x:Name="PcControlsCheck" Content="Controles de PC de bbhost (desactivar = controles anteriores)" />
+                                    <CheckBox x:Name="MouseCameraCheck" Content="Cámara de ratón" Margin="0,10,0,0" />
+                                    <CheckBox x:Name="MouseMenuCheck" Content="Seleccionar menús con el ratón" Margin="0,10,0,0" />
+                                    <TextBlock Text="Sensibilidad del ratón (0–10)" Margin="0,16,0,6" />
+                                    <Slider x:Name="MouseSensitivitySlider" Minimum="0" Maximum="10" TickFrequency="1" IsSnapToTickEnabled="True" TickPlacement="BottomRight" />
+                                    <TextBlock Text="{Binding ElementName=MouseSensitivitySlider,Path=Value,StringFormat={}{0:0}}" HorizontalAlignment="Center" />
+                                    <CheckBox x:Name="MouseInvertXCheck" Content="Invertir eje horizontal" Margin="0,10,0,0" />
+                                    <CheckBox x:Name="MouseInvertYCheck" Content="Invertir eje vertical" Margin="0,10,0,0" />
+                                    <CheckBox x:Name="MouseAutoRotationCheck" Content="Rotación automática de cámara al moverse" Margin="0,10,0,0" />
+                                    <TextBlock Text="WASD: moverse · Alt: caminar · Espacio: esquivar/correr · Q: fijar objetivo. Ratón izquierdo: ataque · Mayús + ataque: ataque fuerte · derecho: disparo · central: transformar arma." Foreground="#B0A89C" Margin="0,14,0,0" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource CardStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="ASIGNACIÓN DE TECLAS" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Edita la columna de asignación. Puedes usar una tecla y un botón, por ejemplo: E, Mouse1. Mouse1–5, WheelUp, WheelDown; none para desactivar. Dentro del juego puedes pulsar directamente la tecla en Key Bindings." Foreground="#B0A89C" TextWrapping="Wrap" Margin="0,0,0,12" />
+                                    <DataGrid x:Name="KeyBindingsGrid" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False" HeadersVisibility="Column" Height="410" RowBackground="#161C1F" AlternatingRowBackground="#20282C" Foreground="#E8E0D6" Background="#0C1011" BorderBrush="#6B5B45" GridLinesVisibility="None" SelectionUnit="Cell">
+                                        <DataGrid.ColumnHeaderStyle>
+                                            <Style TargetType="DataGridColumnHeader">
+                                                <Setter Property="Background" Value="#302A21" /><Setter Property="Foreground" Value="#E8E0D6" /><Setter Property="Padding" Value="10,8" />
+                                            </Style>
+                                        </DataGrid.ColumnHeaderStyle>
+                                        <DataGrid.Columns>
+                                            <DataGridTextColumn Header="Acción" Binding="{Binding Action}" IsReadOnly="True" Width="*" />
+                                            <DataGridTextColumn Header="Asignación" Binding="{Binding Binding,UpdateSourceTrigger=PropertyChanged}" Width="220" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                    <Button Content="Restaurar teclas predeterminadas" Click="ResetKeys_Click" Margin="0,14,0,0" HorizontalAlignment="Left" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
