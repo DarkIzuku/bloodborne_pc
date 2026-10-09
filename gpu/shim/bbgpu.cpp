@@ -13,6 +13,8 @@
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <fstream>
+#include <iterator>
 #include <boost/asio/io_context.hpp>
 #include "common/polyfill_thread.h"
 #include "video_core/renderdoc.h"
@@ -89,6 +91,36 @@ public:
         info.title = config.title ? config.title : "";
         info.sdk_ver = config.sdk_version;
         info.psf_attributes.raw = config.psf_attributes;
+        // Online libraries read the game's NP communication id, rather than an
+        // emulator's profile. Use the same validated game directory as the launcher.
+        const char* app0 = std::getenv("BB_GAME_DIR");
+        if (app0 && *app0) {
+            info.game_folder = std::filesystem::u8path(app0);
+            info.app_ver = "01.09";
+            std::ifstream file(info.game_folder / "sce_sys/npbind.dat", std::ios::binary);
+            if (file) {
+                file.seekg(0, std::ios::end);
+                const auto length = file.tellg();
+                if (length >= 0x80 && length <= 1024 * 1024) {
+                    file.seekg(0);
+                    std::vector<u8> bytes(static_cast<size_t>(length));
+                    if (file.read(reinterpret_cast<char*>(bytes.data()), bytes.size())) {
+                        info.npCommIds.clear();
+                        for (size_t at = 0x80; at + 4 <= bytes.size();) {
+                            const u16 tag = u16(bytes[at] << 8 | bytes[at + 1]);
+                            const u16 size = u16(bytes[at + 2] << 8 | bytes[at + 3]);
+                            at += 4;
+                            if (size > bytes.size() - at) break;
+                            if (tag == 0x10 && size) {
+                                const auto end = std::find(bytes.begin() + at, bytes.begin() + at + size, 0);
+                                info.npCommIds.emplace_back(bytes.begin() + at, end);
+                            }
+                            at += size;
+                        }
+                    }
+                }
+            }
+        }
     }
 };
 
@@ -306,11 +338,19 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
 }
 
 namespace Libraries::Kernel { void StartKernelService(); }
+extern "C" void bbnet_register(void);
+extern "C" void bbnet_initialize(void);
+extern "C" void bbgpu_start_online(void) {
+    const char* online = std::getenv("BB_ONLINE");
+    if (online && online[0] == '1') bbnet_initialize();
+}
 extern "C" void bbgpu_register_kernel(void) {
     Libraries::Kernel::StartKernelService();
     Core::Loader::SymbolsResolver resolver;
     Libraries::Kernel::RegisterEventQueue(&resolver);
     Libraries::AvPlayer::RegisterLib(&resolver);
+    const char* online = std::getenv("BB_ONLINE");
+    if (online && online[0] == '1') bbnet_register();
 }
 
 extern "C" uintptr_t bbgpu_resolve(const char* scoped_nid) {

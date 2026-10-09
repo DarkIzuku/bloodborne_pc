@@ -83,8 +83,15 @@ if [[ ! -f out/libatrac9.a || -n $(find third_party/LibAtrac9/C/src -newer out/l
 fi
 # Windows: the link includes the GPU library's link-time optimization (a minute or more), and
 # run.bat builds before every start, so an up-to-date executable is kept.
+gpu_inputs=(out/gpu/libbbgpu.a out/gpu/bbgpu_link.txt)
+if [[ -n $windows ]]; then
+    # Native bridge dependencies can change without changing libbbgpu.a itself.
+    for dependency in "${gpu[@]}"; do
+        [[ ! -f $dependency ]] || gpu_inputs+=("$dependency")
+    done
+fi
 if [[ -n $windows && -f out/bb-probe.exe && -f out/bb-gpu-capabilities.exe &&
-      -z $(find src gpu/bbgpu.h out/gpu/libbbgpu.a out/gpu/bbgpu_link.txt out/libatrac9.a build.sh \
+      -z $(find src gpu/bbgpu.h "${gpu_inputs[@]}" out/libatrac9.a build.sh \
                tools/gpu_capabilities.c -newer out/bb-probe.exe -print -quit) ]]; then
     echo "Up to date: $PWD/out/bb-probe.exe"
 else

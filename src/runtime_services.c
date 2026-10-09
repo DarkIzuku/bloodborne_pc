@@ -483,4 +483,26 @@ static const RuntimeExport exports[]={
     {"sceDiscMapIsRequestOnHDD",discmap_on_hdd}, {"sceDiscMap_8A828CAEE7EDD5E9",discmap_8a82},
     {"sceVoiceInit",ok_void}, {"sceVoiceEnd",ok_void},
 };
-uintptr_t runtime_services_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
+/* Opt-in native networking. Saves, trophies and dialogs retain their local contracts. */
+static int online_symbol(const char *symbol) {
+    static const char *const prefixes[]={"sceNet","sceNp","sceHttp","sceSsl"};
+    static const char *const local[]={"sceNpTrophy","sceNpCommerce","sceNpProfileDialog"};
+    int online=0;
+    for (size_t i=0;i<sizeof(prefixes)/sizeof(*prefixes);++i)
+        if (!strncmp(symbol,prefixes[i],strlen(prefixes[i]))) online=1;
+    for (size_t i=0;i<sizeof(local)/sizeof(*local);++i)
+        if (!strncmp(symbol,local[i],strlen(local[i]))) online=0;
+    return online;
+}
+uintptr_t runtime_services_resolve(const char *name) {
+    const char *enabled=getenv("BB_ONLINE");
+    if (enabled && enabled[0]=='1') {
+        const char *symbol=runtime_symbol(name);
+        if (symbol && online_symbol(symbol)) {
+            const uintptr_t function=bbgpu_resolve(name);
+            if (function) return function;
+            printf("Online: %s unavailable; retaining its offline contract\n",symbol);
+        }
+    }
+    return RUNTIME_LOOKUP(exports,name);
+}

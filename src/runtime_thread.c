@@ -354,6 +354,19 @@ static ABI int32_t posix_create(GuestThread **t,ThreadAttr **a,GuestEntry e,void
 static ABI int32_t posix_create_name(GuestThread **t,ThreadAttr **a,GuestEntry e,void *arg,const char *name) { return posix(create(t,a,e,arg,name)); }
 static ABI int32_t posix_join(GuestThread *t,void **r) { return posix(thread_join(t,r)); }
 
+/* Online libraries invoke game callbacks on threads with the runtime's guest TLS. */
+int32_t runtime_thread_spawn(void **out,void *(ABI *entry)(void *),void *argument,uint64_t stack,const char *name) {
+    ThreadAttr *attr=NULL;
+    int32_t result=attr_init(&attr);
+    if (!result && stack) result=attr_set_stack(&attr,stack);
+    if (!result) result=create((GuestThread **)out,&attr,entry,argument,name);
+    if (attr) attr_destroy(&attr);
+    return posix(result);
+}
+int32_t runtime_thread_join_spawned(void *thread,void **result) {
+    return posix(thread_join(thread,result));
+}
+
 uintptr_t runtime_thread_resolve(const char *name) {
     static const struct { const char *nid; void *fn; } table[]={
         {"aI+OeCz8xrQ#p#J",thread_self}, {"EotR8a3ASf4#I#J",thread_self},
