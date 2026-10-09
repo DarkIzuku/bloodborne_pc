@@ -2,6 +2,7 @@
 // The editor controller/refcount lifecycle is adapted from bbhost, not the GPU renderer.
 #include "engine_hooks.h"
 #include "camera.h"
+#include "option_menu.h"
 #include "bbport_settings.h"
 #include "bbport_platform.h"
 #include <atomic>
@@ -173,6 +174,7 @@ std::int64_t __attribute__((sysv_abi)) StepHook(std::uint64_t, const std::uint64
 }
 std::int64_t __attribute__((sysv_abi)) FrameHook(std::uint64_t, const std::uint64_t*) {
     change_appearance_tick();
+    Options::Tick();
     Camera::Tick();
     return 0; // The established FPS++ implementation still runs, byte for byte.
 }
@@ -212,6 +214,7 @@ void Install(std::uint8_t* image, std::size_t size) {
         for (auto& hook : hooks) Discard(hook);
         Log("engine enhancements disabled: no compatible feature could be prepared"); return;
     }
+    Options::Install(image,size);
     Commit(hooks);
 }
 } // namespace BbEngine

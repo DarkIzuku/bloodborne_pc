@@ -10,6 +10,12 @@ Source: https://github.com/droogie/bbhost/tree/7c790536c2c27ad7bb5115e3b1a12d7ff
 `gpu/shim/engine/camera.cpp` adapts `engine/camera.cpp` and the typed repository
 lookup in `engine/params.cpp`. Its sliders and the WPF launcher share the existing
 `bbport.ini`; no bbhost renderer or second configuration store is introduced.
+`gpu/shim/engine/option_menu.cpp` adapts the native row, caption, section opener and
+System builder from `engine/option_menu.cpp`. `menu_memory.cpp` adapts bbhost's
+Scaleform heap sizes. `tools/engine/menu_assets.cpp` adapts the independent GFX,
+BND4 and FMG serializers from `engine/menu_assets.cpp`, with bounded inflation;
+its PC strings come from `tools/pc_option_messages.tsv`. All edited game movies
+and language bundles are prepared locally, never packaged or committed.
 
 These portions are GPL-3.0-or-later. Copyright remains with the bbhost contributors.
 The surrounding bloodborne_pc code remains GPL-2.0-or-later under its existing notices.

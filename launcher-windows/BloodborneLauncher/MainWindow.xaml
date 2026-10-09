@@ -319,7 +319,7 @@
                                         <StackPanel Margin="0,0,12,0"><TextBlock Text="Camera distance" /><ComboBox x:Name="CameraDistanceCombo" AutomationProperties.Name="Camera distance" Margin="0,6,0,0" /></StackPanel>
                                         <StackPanel><TextBlock Text="Camera height" /><ComboBox x:Name="CameraHeightCombo" AutomationProperties.Name="Camera height" Margin="0,6,0,0" /></StackPanel>
                                     </UniformGrid>
-                                    <TextBlock Text="100% keeps the game's camera. Enable before launching; scales can also be adjusted in game." Foreground="#9CA3A9" TextWrapping="Wrap" Margin="0,8,0,0" />
+                                    <TextBlock Text="100% keeps the game's camera. Enable before launching; adjust these values live in System → PC Camera." Foreground="#9CA3A9" TextWrapping="Wrap" Margin="0,8,0,0" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>

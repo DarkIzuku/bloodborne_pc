@@ -466,6 +466,8 @@ public partial class MainWindow : Window
                 {
                     Show();
                     WindowState = WindowState.Normal;
+                    LoadState();
+                    ApplyStateToUi();
                     Activate();
                     FooterMessage.Text = "Bloodborne closed";
                     gameProcess.Dispose();

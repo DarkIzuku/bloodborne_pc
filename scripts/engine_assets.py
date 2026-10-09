@@ -6,6 +6,8 @@ upstream 7c790536c2c27ad7bb5115e3b1a12d7ffd7a972e. Game files stay local.
 """
 import hashlib
 import os
+import json
+import subprocess
 from pathlib import Path
 import struct
 import zlib
@@ -156,3 +158,60 @@ def prepare_mirror(game, elf_path, cache):
     temporary.write_bytes(dcx_pack(rewritten))
     os.replace(temporary, destination)
     return destination.resolve()
+
+
+def prepare_menu_assets(game, elf_path, cache, tool):
+    """Generate bbhost's native option movie and messages from the player's own dump.
+
+    Validate every language, source and cached output together before publishing the
+    directory to the runtime. No version string or stale stamp enables native hooks.
+    """
+    verify_executable(elf_path)
+    game, tool = Path(game), Path(tool)
+    root = Path(cache) / 'pc-menus'
+    movie = Path('dvdroot_ps4/menu/optionsetting.gfx')
+    sources = [(movie, 'movie')]
+    message_dir = game / 'dvdroot_ps4/msg'
+    sources += [(p.relative_to(game), 'messages')
+                for p in sorted(message_dir.glob('*/menu.msgbnd.dcx')) if p.is_file()]
+    if len(sources) < 2 or len(sources) > 24:
+        raise ValueError('Native options require valid menu bundles for every installed language')
+    generator = sha(tool.read_bytes())
+    manifest_path = root / 'manifest.json'
+    try:
+        previous = json.loads(manifest_path.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        previous = {}
+    rows = {}
+    for relative, kind in sources:
+        source, destination = game / relative, root / relative
+        if source.stat().st_size > 64 * 1024 * 1024:
+            raise ValueError(f'Native menu source is oversized: {relative}')
+        digest = sha(source.read_bytes())
+        prior = previous.get('files', {}).get(relative.as_posix(), {})
+        current = None
+        if previous.get('generator') == generator and prior.get('input') == digest:
+            try:
+                current = sha(destination.read_bytes())
+                if current != prior.get('output'):
+                    current = None
+            except OSError:
+                pass
+        if current is None:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary = destination.with_name(destination.name + f'.{os.getpid()}.tmp')
+            try:
+                result = subprocess.run([str(tool), kind, str(source), str(temporary)],
+                                        capture_output=True, text=True, errors='replace')
+                if result.returncode:
+                    raise ValueError(result.stderr.strip() or f'Menu generator failed: {relative}')
+                current = sha(temporary.read_bytes())
+                os.replace(temporary, destination)
+            finally:
+                temporary.unlink(missing_ok=True)
+        rows[relative.as_posix()] = {'input': digest, 'output': current}
+    root.mkdir(parents=True, exist_ok=True)
+    temporary = manifest_path.with_suffix(f'.{os.getpid()}.tmp')
+    temporary.write_text(json.dumps({'generator': generator, 'files': rows}, indent=2), encoding='utf-8')
+    os.replace(temporary, manifest_path)
+    return root.resolve()

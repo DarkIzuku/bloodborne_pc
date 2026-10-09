@@ -30,7 +30,7 @@ typedef struct stat HostStat;
 #endif
 #define ERR(n) ((int32_t)(UINT32_C(0x80020000)|(n)))
 #define MAX_FILES 1024
-#define MAX_MOUNTS 16
+#define MAX_MOUNTS 64 /* exact local menu-language files plus existing game/save mounts */
 
 typedef struct { int64_t sec, nsec; } GuestTimespec;
 typedef struct {

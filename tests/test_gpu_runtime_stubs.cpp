@@ -13,6 +13,9 @@ typedef sigjmp_buf RuntimeRecoverBuf;
 #endif
 // Renderer tests have no guest process. Clock/host-thread services work; guest accesses abort.
 extern "C" {
+// Engine asset mounts belong to the runtime; GPU-only tests never install them.
+int runtime_file_mount(const char*, const char*) { return -1; }
+void runtime_file_unmount(const char*) {}
 __thread RuntimeRecoverBuf* runtime_fault_recover = nullptr;
 int runtime_setjmp(RuntimeRecoverBuf*) { return 0; }
 [[noreturn]] void runtime_longjmp(RuntimeRecoverBuf*) { std::abort(); }

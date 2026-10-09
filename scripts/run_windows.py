@@ -136,8 +136,11 @@ def main():
         for script, extra in (('prepare.py', []), ('link_libc.py', []), ('link_modules.py', []),
                               ('content_profile.py', ['--sku', os.environ.get('BB_CONTENT_SKU', 'full')])):
             run([PYTHON, SCRIPTS / script, merged, '--out', out, *extra])
+        prebuilt = os.environ.get('BB_PREBUILT') == '1'
+        if not prebuilt:
+            build()
         # Engine features are prepared locally and only mounted after runtime byte checks.
-        for key in ('BB_DREAM_MIRROR_ASSET', 'BB_ENGINE_IMAGE_SHA256'):
+        for key in ('BB_DREAM_MIRROR_ASSET', 'BB_ENGINE_IMAGE_SHA256', 'BB_PC_MENU_ASSETS'):
             os.environ.pop(key, None)
         if any(settings_value(config, key) == '1' for key in ('change_appearance', 'camera_controls')):
             try:
@@ -147,6 +150,15 @@ def main():
                     asset = prepare_mirror(merged, out / 'eboot.elf', data / 'engine-assets')
                     os.environ['BB_DREAM_MIRROR_ASSET'] = str(asset)
                     print(f'Engine: Dream mirror prepared locally: {asset}', flush=True)
+                if settings_value(config, 'camera_controls') == '1':
+                    from engine_assets import prepare_menu_assets
+                    try:
+                        menus = prepare_menu_assets(merged, out / 'eboot.elf', data / 'engine-assets',
+                                                    out / 'bb-engine-assets.exe')
+                        os.environ['BB_PC_MENU_ASSETS'] = str(menus)
+                        print(f'Engine: native PC menus prepared locally: {menus}', flush=True)
+                    except (OSError, ValueError) as error:
+                        print(f'Engine: native PC menus disabled: {error}', flush=True)
             except (OSError, ValueError, IndexError, struct.error, zlib.error) as error:
                 print(f'Engine: enhancement preparation skipped: {error}', flush=True)
         # Sizes chosen below for the previous launch are recomputed after an in-game restart.
@@ -159,9 +171,6 @@ def main():
             sizes = run([PYTHON, SCRIPTS / 'patches.py', '--print-scaled', '--settings', config], capture=True, check=False)
             if sizes and len(sizes.split()) == 2:
                 scaled_render, scaled_output = sizes.split()
-        prebuilt = os.environ.get('BB_PREBUILT') == '1'
-        if not prebuilt:
-            build()
         live = '0'
         if scaled_output:
             live = os.environ.get('BB_LIVE_RES') or settings_value(config, 'live_resolution') or '0'
