@@ -73,6 +73,8 @@ struct Values {
     std::atomic<int> active_render_width{1920}, active_render_height{1080};
     /// Applied at start (patches.py); the menu shows when a restart is needed.
     std::atomic<bool> effects[EffectCount]{};
+    std::atomic<bool> camera_controls{false}; // startup engine hook, opt-in
+    std::atomic<float> camera_fov_scale{1.0f}, camera_distance_scale{1.0f}, camera_height_scale{1.0f};
     std::atomic<int> model_lod{0}; ///< -2 highest .. 2 lowest, 0 the game's
     std::atomic<int> output_res{OutputDefault}; ///< index into OutputWidths
     /// Borderless fullscreen window at the desktop size (F11 toggles; BB_FULLSCREEN overrides).

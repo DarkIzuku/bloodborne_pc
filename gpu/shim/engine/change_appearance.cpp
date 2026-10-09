@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The editor controller/refcount lifecycle is adapted from bbhost, not the GPU renderer.
 #include "engine_hooks.h"
+#include "camera.h"
+#include "bbport_settings.h"
 #include "bbport_platform.h"
 #include <atomic>
 #include <cstdarg>
@@ -171,6 +173,7 @@ std::int64_t __attribute__((sysv_abi)) StepHook(std::uint64_t, const std::uint64
 }
 std::int64_t __attribute__((sysv_abi)) FrameHook(std::uint64_t, const std::uint64_t*) {
     change_appearance_tick();
+    Camera::Tick();
     return 0; // The established FPS++ implementation still runs, byte for byte.
 }
 } // namespace
@@ -178,7 +181,8 @@ std::int64_t __attribute__((sysv_abi)) FrameHook(std::uint64_t, const std::uint6
 void Install(std::uint8_t* image, std::size_t size) {
     const char* asset = std::getenv("BB_DREAM_MIRROR_ASSET");
     const char* identity = std::getenv("BB_ENGINE_IMAGE_SHA256");
-    if (!asset || !*asset) return;
+    const bool mirror = asset && *asset;
+    if (!mirror && !BbSettings::Get().camera_controls) return;
     if (!identity || std::strcmp(identity, "071df19c8880086d97182dbc057bc8cb37badaca57d9112683836b24a0444c0a")) {
         Log("mirror disabled: executable identity was not verified"); return;
     }
@@ -186,9 +190,11 @@ void Install(std::uint8_t* image, std::size_t size) {
     const char* original = std::getenv("BB_GAME_DIR");
     char resolved[512]{};
     std::error_code error;
-    if (!original || runtime_file_translate(guest, resolved, sizeof resolved) ||
-        !std::filesystem::equivalent(resolved, std::filesystem::path(original) / "dvdroot_ps4/map/mapstudio/m21_00_00_00.msb.dcx", error)) {
-        Log("mirror disabled: a user mod owns the Dream layout"); return;
+    if (mirror && (!original || runtime_file_translate(guest, resolved, sizeof resolved) ||
+        !std::filesystem::equivalent(resolved, std::filesystem::path(original) / "dvdroot_ps4/map/mapstudio/m21_00_00_00.msb.dcx", error))) {
+        Log("mirror disabled: a user mod owns the Dream layout");
+        asset = nullptr;
+        if (!BbSettings::Get().camera_controls) return;
     }
     Hook hooks[2];
     if (!Prepare(hooks[0], image, size, 0x1c1cce0, kStepPrologue, StepHook) ||
@@ -196,14 +202,16 @@ void Install(std::uint8_t* image, std::size_t size) {
         for (auto& hook : hooks) Discard(hook);
         Log("mirror disabled: engine bytes differ or hook allocation failed"); return;
     }
-    if (!std::filesystem::is_regular_file(asset, error) || error || runtime_file_mount(guest, asset)) {
-        for (auto& hook : hooks) Discard(hook);
-        Log("mirror disabled: prepared layout could not be mounted"); return;
-    }
     g_slide = reinterpret_cast<std::uint64_t>(image);
-    g_watch = 0;
-    g_frame_on = true;
+    if (asset && std::filesystem::is_regular_file(asset, error) && !error && !runtime_file_mount(guest, asset)) {
+        g_watch = 0; g_frame_on = true;
+        Log("Dream mirror enabled: native appearance editor and ChrMake_BG preview; %s", asset);
+    }
+    const bool camera = Camera::Install(image, size);
+    if (!g_frame_on && !camera) {
+        for (auto& hook : hooks) Discard(hook);
+        Log("engine enhancements disabled: no compatible feature could be prepared"); return;
+    }
     Commit(hooks);
-    Log("Dream mirror enabled: native appearance editor and ChrMake_BG preview; %s", asset);
 }
 } // namespace BbEngine

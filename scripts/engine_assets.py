@@ -118,7 +118,7 @@ def mirror_layout(raw):
     return bytes(b)
 
 
-def prepare_mirror(game, elf_path, cache):
+def verify_executable(elf_path):
     # The two full-file identities have identical loadable 1.09 code. A version string
     # alone, or BB_SKIP_GAME_CHECK, never enables address-based hooks.
     elf = Path(elf_path).read_bytes()
@@ -137,6 +137,11 @@ def prepare_mirror(game, elf_path, cache):
                 break
         if not found:
             raise ValueError(f'Unexpected 1.09 engine bytes at {address:#x}')
+    return IMAGE_SHA
+
+
+def prepare_mirror(game, elf_path, cache):
+    verify_executable(elf_path)
     raw = dcx_unpack((Path(game) / LAYOUT).read_bytes())
     rewritten = mirror_layout(raw)
     destination = Path(cache) / 'dream-mirror' / LAYOUT

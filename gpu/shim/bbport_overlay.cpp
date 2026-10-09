@@ -491,6 +491,12 @@ void Menu() {
         }
     }
 
+    ImGui::SeparatorText("PC Camera");
+    ImGui::TextDisabled("Enable PC Camera in the launcher before starting; changes here are live.");
+    Slider("Camera FOV scale", s.camera_fov_scale, 1.0f, 1.5f);
+    Slider("Camera distance scale", s.camera_distance_scale, 0.5f, 1.5f);
+    Slider("Camera height scale", s.camera_height_scale, 0.5f, 1.5f);
+
     ImGui::SeparatorText(BbSettings::MenuText("Other", "Прочее"));
     Checkbox(BbSettings::MenuText("FPS counter in corner", "Счётчик FPS в углу"), s.show_fps);
 

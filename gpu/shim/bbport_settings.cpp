@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -75,6 +76,14 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fsr4_auto_exposure = i != 0;
     } else if (key == "fsr4_invert_jitter") {
         v.fsr4_invert_jitter = i != 0;
+    } else if (key == "camera_controls") {
+        v.camera_controls = i != 0;
+    } else if (key == "camera_fov_scale") {
+        v.camera_fov_scale = Clamp(std::isfinite(f) ? f : 1.0f, 1.0f, 1.5f);
+    } else if (key == "camera_distance_scale") {
+        v.camera_distance_scale = Clamp(std::isfinite(f) ? f : 1.0f, 0.5f, 1.5f);
+    } else if (key == "camera_height_scale") {
+        v.camera_height_scale = Clamp(std::isfinite(f) ? f : 1.0f, 0.5f, 1.5f);
     } else if (key == "model_lod") {
         v.model_lod = std::clamp(i, -2, 2);
     } else if (key == "fullscreen") {
@@ -242,6 +251,10 @@ void Save() {
         put(Effects[e].key, flag(v.effects[e]));
     }
     put("fullscreen", flag(v.fullscreen));
+    put("camera_controls", flag(v.camera_controls));
+    put("camera_fov_scale", fixed(v.camera_fov_scale, 2));
+    put("camera_distance_scale", fixed(v.camera_distance_scale, 2));
+    put("camera_height_scale", fixed(v.camera_height_scale, 2));
     put("model_lod", std::to_string(v.model_lod.load()));
     put("output_res", std::to_string(OutputWidths[v.output_res]) + "x" +
                           std::to_string(OutputHeights[v.output_res]));

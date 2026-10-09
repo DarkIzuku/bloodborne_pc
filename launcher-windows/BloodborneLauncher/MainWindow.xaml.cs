@@ -1,5 +1,6 @@
 using Microsoft.Win32;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -33,6 +34,10 @@ public partial class MainWindow : Window
         public bool GameAa { get; set; } = true;
         public bool Shadows { get; set; } = true;
         public bool Ssr { get; set; }
+        public bool CameraControls { get; set; }
+        public string CameraFov { get; set; } = "1.00";
+        public string CameraDistance { get; set; } = "1.00";
+        public string CameraHeight { get; set; } = "1.00";
         public bool ChangeAppearance { get; set; }
         public bool SkipIntro { get; set; }
         public int GamepadIndex { get; set; }
@@ -55,6 +60,7 @@ public partial class MainWindow : Window
         root = FindProjectRoot();
         statePath = Path.Combine(root, "launcher-settings.json");
         ModsFolderText.Text = Path.Combine(root, "mods");
+        ConfigureCameraChoices();
         LoadState();
         ApplyStateToUi();
         InitializePresentation();
@@ -91,9 +97,38 @@ public partial class MainWindow : Window
         state.Fps = NormalizeFps(state.Fps);
         string? mirror = ReadIniValue("change_appearance");
         if (mirror != null) state.ChangeAppearance = mirror == "1";
+        string? camera = ReadIniValue("camera_controls");
+        if (camera != null) state.CameraControls = camera == "1";
+        state.CameraFov = CameraScale(ReadIniValue("camera_fov_scale") ?? state.CameraFov, 1);
+        state.CameraDistance = CameraScale(ReadIniValue("camera_distance_scale") ?? state.CameraDistance, 0.5);
+        state.CameraHeight = CameraScale(ReadIniValue("camera_height_scale") ?? state.CameraHeight, 0.5);
     }
 
     static string NormalizeFps(string? value) => value is "30" or "60" or "90" ? value : "60";
+
+    static string CameraScale(string? value, double min)
+    {
+        if (!double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double scale) || !double.IsFinite(scale)) scale = 1;
+        return Math.Clamp(scale, min, 1.5).ToString("0.00", CultureInfo.InvariantCulture);
+    }
+
+    void ConfigureCameraChoices()
+    {
+        foreach (var (box, min, step) in new[] { (CameraFovCombo, 1.0, 0.05), (CameraDistanceCombo, 0.5, 0.1), (CameraHeightCombo, 0.5, 0.1) })
+            for (int i = 0; i <= 10; ++i)
+            {
+                double value = min + step * i;
+                box.Items.Add(new ComboBoxItem { Tag = value.ToString("0.00", CultureInfo.InvariantCulture), Content = $"{value * 100:0}%" });
+            }
+    }
+
+    static void SetCameraScale(ComboBox box, string value)
+    {
+        // Preserve an intermediate scale saved by the in-game slider.
+        if (!box.Items.Cast<ComboBoxItem>().Any(item => item.Tag?.ToString() == value))
+            box.Items.Add(new ComboBoxItem { Tag = value, Content = $"{double.Parse(value, CultureInfo.InvariantCulture) * 100:0}%" });
+        SetComboTag(box, value);
+    }
 
     string? ReadIniValue(string key)
     {
@@ -138,6 +173,10 @@ public partial class MainWindow : Window
         SsrCheck.IsChecked = state.Ssr;
         SkipIntroCheck.IsChecked = state.SkipIntro;
         ChangeAppearanceCheck.IsChecked = state.ChangeAppearance;
+        CameraControlsCheck.IsChecked = state.CameraControls;
+        SetCameraScale(CameraFovCombo, state.CameraFov);
+        SetCameraScale(CameraDistanceCombo, state.CameraDistance);
+        SetCameraScale(CameraHeightCombo, state.CameraHeight);
 
         ControllerCombo.SelectedIndex = Math.Clamp(state.GamepadIndex, 0, 3);
         ModsEnabledCheck.IsChecked = state.ModsEnabled;
@@ -172,6 +211,10 @@ public partial class MainWindow : Window
         state.Ssr = SsrCheck.IsChecked == true;
         state.SkipIntro = SkipIntroCheck.IsChecked == true;
         state.ChangeAppearance = ChangeAppearanceCheck.IsChecked == true;
+        state.CameraControls = CameraControlsCheck.IsChecked == true;
+        state.CameraFov = CameraScale(ComboTag(CameraFovCombo), 1);
+        state.CameraDistance = CameraScale(ComboTag(CameraDistanceCombo), 0.5);
+        state.CameraHeight = CameraScale(ComboTag(CameraHeightCombo), 0.5);
         state.GamepadIndex = Math.Max(0, ControllerCombo.SelectedIndex);
         state.ModsEnabled = ModsEnabledCheck.IsChecked == true;
         state.DeveloperMode = DeveloperModeCheck.IsChecked == true;
@@ -207,7 +250,11 @@ public partial class MainWindow : Window
             ["effect_dynamic_shadows"] = state.Shadows ? "1" : "0",
             ["effect_ssr"] = state.Ssr ? "1" : "0",
             ["skip_intro"] = state.SkipIntro ? "1" : "0",
-            ["change_appearance"] = state.ChangeAppearance ? "1" : "0"
+            ["change_appearance"] = state.ChangeAppearance ? "1" : "0",
+            ["camera_controls"] = state.CameraControls ? "1" : "0",
+            ["camera_fov_scale"] = state.CameraFov,
+            ["camera_distance_scale"] = state.CameraDistance,
+            ["camera_height_scale"] = state.CameraHeight
         };
         RewriteIni(Path.Combine(root, "bbport.ini"), ini);
         FooterMessage.Text = "Settings saved";

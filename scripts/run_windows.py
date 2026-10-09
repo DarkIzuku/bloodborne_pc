@@ -139,15 +139,16 @@ def main():
         # Engine features are prepared locally and only mounted after runtime byte checks.
         for key in ('BB_DREAM_MIRROR_ASSET', 'BB_ENGINE_IMAGE_SHA256'):
             os.environ.pop(key, None)
-        if settings_value(config, 'change_appearance') == '1':
+        if any(settings_value(config, key) == '1' for key in ('change_appearance', 'camera_controls')):
             try:
-                from engine_assets import prepare_mirror, IMAGE_SHA
-                asset = prepare_mirror(merged, out / 'eboot.elf', data / 'engine-assets')
-                os.environ['BB_DREAM_MIRROR_ASSET'] = str(asset)
-                os.environ['BB_ENGINE_IMAGE_SHA256'] = IMAGE_SHA
-                print(f'Engine: Dream mirror prepared locally: {asset}', flush=True)
+                from engine_assets import prepare_mirror, verify_executable
+                os.environ['BB_ENGINE_IMAGE_SHA256'] = verify_executable(out / 'eboot.elf')
+                if settings_value(config, 'change_appearance') == '1':
+                    asset = prepare_mirror(merged, out / 'eboot.elf', data / 'engine-assets')
+                    os.environ['BB_DREAM_MIRROR_ASSET'] = str(asset)
+                    print(f'Engine: Dream mirror prepared locally: {asset}', flush=True)
             except (OSError, ValueError, IndexError, struct.error, zlib.error) as error:
-                print(f'Engine: Dream mirror disabled: {error}', flush=True)
+                print(f'Engine: enhancement preparation skipped: {error}', flush=True)
         # Sizes chosen below for the previous launch are recomputed after an in-game restart.
         if os.environ.get('BB_AUTO_RENDER_RES') == '1':
             for key in ('BB_RENDER_RES', 'BB_OUTPUT_RES', 'BB_AUTO_RENDER_RES'):

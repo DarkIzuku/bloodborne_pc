@@ -64,6 +64,20 @@ int main() {
     s.upscaler = BbSettings::UpscalerDlss;
     BbSettings::ConfigureUpscalerSupport(false, false, true);
     assert(s.upscaler == BbSettings::UpscalerDlss && s.dlss_supported);
+    s.camera_controls = true;
+    s.camera_fov_scale = 1.25f;
+    s.camera_distance_scale = 0.80f;
+    s.camera_height_scale = 1.10f;
+    BbSettings::Save();
+    s.camera_controls = false;
+    s.camera_fov_scale = s.camera_distance_scale = s.camera_height_scale = 1.0f;
+    BbSettings::Load();
+    assert(s.camera_controls && s.camera_fov_scale == 1.25f);
+    assert(s.camera_distance_scale == 0.80f && s.camera_height_scale == 1.10f);
+    // Edited configs must not feed infinite/NaN camera transforms to the engine.
+    { std::ofstream file(path); file << "camera_fov_scale=nan\ncamera_distance_scale=-10\ncamera_height_scale=inf\n"; }
+    BbSettings::Load();
+    assert(s.camera_fov_scale == 1.0f && s.camera_distance_scale == 0.5f && s.camera_height_scale == 1.0f);
     std::filesystem::remove(temporary);
     std::puts("PASS: settings save keeps other keys, menu position");
 }
