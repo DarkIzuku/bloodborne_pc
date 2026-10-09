@@ -14,8 +14,20 @@ lookup in `engine/params.cpp`. Its sliders and the WPF launcher share the existi
 System builder from `engine/option_menu.cpp`. `menu_memory.cpp` adapts bbhost's
 Scaleform heap sizes. `tools/engine/menu_assets.cpp` adapts the independent GFX,
 BND4 and FMG serializers from `engine/menu_assets.cpp`, with bounded inflation;
-its PC strings come from `tools/pc_option_messages.tsv`. All edited game movies
+its PC strings come from `tools/engine/pc_option_messages.tsv`. All edited game movies
 and language bundles are prepared locally, never packaged or committed.
+`engine_state.cpp` adapts typed lookups from `params.cpp`, `player_data.cpp`,
+`event_flags.cpp`, `world_chr.cpp` and the shared `menu_steps.cpp` watches.
+`event_flag_layout.h` retains the traversal from `decomp/sprj_event_flag_man.h`.
+`rebirth.cpp` retains the native apply/heal, refund, snapshot/undo and menu
+lifecycle from `engine/rebirth.cpp`. The origin pricing in `rebirth_refund.h`
+adds rejection of invalid attributes, non-finite curves and overflowing refunds.
+`tools/engine/esd.*`, `rebirth_script.*` and `sha256.*` adapt the corresponding
+bbhost serializers and digest helper. Both known altar script identities are
+checked before and after preparation.
+`graphics.cpp` adapts the render-view flags and freshly blended CPU parameters
+from `engine/graphics_patch.cpp`. Fog, renderer replacement and shader patches
+are not included; motion blur, DoF and CA keep bloodborne_pc's startup patches.
 
 These portions are GPL-3.0-or-later. Copyright remains with the bbhost contributors.
 The surrounding bloodborne_pc code remains GPL-2.0-or-later under its existing notices.

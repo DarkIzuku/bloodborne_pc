@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Adapted from bbhost engine/menu_assets.cpp at 7c790536. Serialization only.
 #include <zlib.h>
+#include "rebirth_script.h"
 
 #include <algorithm>
 #include <cmath>
@@ -780,7 +781,7 @@ Bytes build_option_movie(const Bytes& src) {
         m = add_option_section(m, a);
     };
     section("PCSetting", 116020, 383, 6, 0, {});
-    section("PCGraphics", 117020, 384, 6, 0, {});
+    section("PCGraphics", 117020, 384, 5, 0, {"Item_5_0"});
     section("PCControls", 118020, 385, 6, 0, {});
     section("PCKeys", 119020, 386, std::nullopt, 2, {});
     section("PCEffects", 120020, 387, 6, 0, {});
@@ -799,7 +800,7 @@ constexpr std::uint32_t kMenuText = 200, kLineHelp = 0xc9;
 constexpr std::uint32_t kDialogText = 78, kScreenDialogText = 0xcc;
 constexpr std::int32_t kFirstDialogId = 920000, kLastDialogId = 929999;
 bool dialog_id(std::int32_t id) { return id >= kFirstDialogId && id <= kLastDialogId; }
-// Event text: ids 14000332..14000399 go to group 30 (イベントテキスト), the talk
+// Event text: ids 14000332..14000399 go to group 30 (ã‚¤ãƒ™ãƒ³ãƒˆãƒ†ã‚­ã‚¹ãƒˆ), the talk
 // menus' entries and the messages their scripts show (engine/rebirth_script.h).
 constexpr std::uint32_t kEventText = 30;
 constexpr std::int32_t kFirstEventId = 14000332, kLastEventId = 14000399;
@@ -1097,6 +1098,37 @@ Bytes build_menu_messages(const Bytes& raw) {
 }
 
 
+
+Bytes build_rebirth(const Bytes& raw) {
+    if (raw.size()<0x4c || std::memcmp(raw.data(),"DCX\0",4) || std::memcmp(raw.data()+0x28,"DFLT",4))
+        throw Fail{"altar archive is not DFLT DCX"};
+    const auto dca=find(raw,"DCA\0",4);
+    if (dca==std::string::npos || dca+8>raw.size()) throw Fail{"altar archive has no DCA"};
+    const auto offset=dca+be32(raw,dca+4);
+    if (offset>raw.size()) throw Fail{"invalid altar DCX header"};
+    auto archive=bnd_read(inflate_all(raw,offset));
+    bool changed=false;
+    for (auto& f:archive.files) {
+        std::string name;
+        if (archive.unicode) {
+            for (std::size_t i=0;i+1<f.name.size();i+=2) name.push_back(f.name[i+1]?'?':f.name[i]);
+        } else name.assign(f.name.begin(),f.name.end());
+        if (!ends_with(name,"t242307.esd")) continue;
+        std::string why;
+        if (!rebirth_script(f.data,&why)) throw Fail{why};
+        changed=true;
+    }
+    if (!changed) throw Fail{"altar archive has no t242307.esd"};
+    auto payload=bnd_pack(archive);
+    uLongf size=compressBound(payload.size()); Bytes compressed(size);
+    if (compress2(compressed.data(),&size,payload.data(),payload.size(),9)!=Z_OK) throw Fail{"compress altar"};
+    compressed.resize(size);
+    Bytes out(raw.begin(),raw.begin()+offset);
+    const auto dcs=find(out,"DCS\0",4);
+    if (dcs==std::string::npos) throw Fail{"altar archive has no DCS"};
+    putbe32(out,dcs+4,payload.size()); putbe32(out,dcs+8,size); app(out,compressed);
+    return out;
+}
 } // namespace
 
 // The launcher runs this only on its private cache. Game data is input-only.
@@ -1118,8 +1150,8 @@ int main(int argc, char** argv) {
 #else
     for (int i=0;i<argc;++i) args.emplace_back(argv[i]);
 #endif
-    if (args.size()!=4 || (args[1]!="movie" && args[1]!="messages")) {
-        std::fputs("Usage: bb-engine-assets movie|messages INPUT OUTPUT\n",stderr); return 2;
+    if (args.size()!=4 || (args[1]!="movie" && args[1]!="messages" && args[1]!="rebirth")) {
+        std::fputs("Usage: bb-engine-assets movie|messages|rebirth INPUT OUTPUT\n",stderr); return 2;
     }
     try {
         if (std::filesystem::equivalent(args[2],args[3])) { std::fputs("Engine menu assets: output must differ from source\n",stderr); return 1; }
@@ -1130,7 +1162,7 @@ int main(int argc, char** argv) {
         Bytes raw(static_cast<std::size_t>(in.tellg()));
         in.seekg(0);
         if (!in.read(reinterpret_cast<char*>(raw.data()),raw.size())) throw Fail{"read source"};
-        Bytes result=args[1]=="movie" ? build_option_movie(raw) : build_menu_messages(raw);
+        Bytes result=args[1]=="movie" ? build_option_movie(raw) : args[1]=="rebirth" ? build_rebirth(raw) : build_menu_messages(raw);
         std::ofstream out(args[3],std::ios::binary|std::ios::trunc);
         if (!out || !out.write(reinterpret_cast<const char*>(result.data()),result.size())) throw Fail{"write cache"};
         return 0;

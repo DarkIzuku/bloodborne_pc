@@ -80,7 +80,7 @@ jobs:
         shell: msys2 {0}
         run: |
           set -e
-          ninja -C out/gpu pipeline-cache-blob-test pipeline-archive-test motion-history-test motion-shader-test image-overlap-test settings-test ui-composition-test engine-hooks-test engine-menu-memory-test
+          ninja -C out/gpu pipeline-cache-blob-test pipeline-archive-test motion-history-test motion-shader-test image-overlap-test settings-test ui-composition-test engine-hooks-test engine-menu-memory-test rebirth-refund-test
           out/gpu/pipeline-cache-blob-test.exe
           out/gpu/pipeline-archive-test.exe
           out/gpu/motion-history-test.exe
@@ -90,6 +90,7 @@ jobs:
           out/gpu/ui-composition-test.exe
           out/gpu/engine-hooks-test.exe
           out/gpu/engine-menu-memory-test.exe
+          out/gpu/rebirth-refund-test.exe
 
       - name: Verify preparation, patches, and mod safety
         shell: msys2 {0}
