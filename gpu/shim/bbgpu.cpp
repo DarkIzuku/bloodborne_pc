@@ -9,6 +9,7 @@
 #endif
 #include "bbport_free_check.h"
 #include "bbport_toggles.h"
+#include "engine/engine_hooks.h"
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
@@ -338,6 +339,7 @@ extern "C" int bbgpu_handle_fault(void* ucontext, void* address) {
 
 extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     BbGnmHooks::PatchImage(image, size);
+    BbEngine::Install(image, size);
 }
 
 extern "C" unsigned bbgpu_symbol_count(void) {
