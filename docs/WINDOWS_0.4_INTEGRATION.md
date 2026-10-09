@@ -58,3 +58,21 @@ Ultrawide, native game-style PC menus, the Dream mirror appearance editor, altar
 mouse/keyboard handling are separate ports from bbhost's engine implementations. They are not
 features of upstream bloodborne_pc 0.4. Inspect their hooks, 1.09 byte checks, script/asset
 generation and host dependencies before adapting them; preserve this renderer and upscalers.
+
+These engine ports now live on bbhost-enhancements-v1. Keyboard/mouse and widescreen use
+bbhost db5457cbd447f4ef129b58df0a78e0a8819c7033: raw camera counts, controller priority,
+target switching flick, Alt walking, region-aware confirmation, actual Scaleform list hit
+testing and native key capture. Output choices include six ultrawide modes. Native UI,
+including loading-card stencil masks, fits the centered 1920x1080 stage uniformly; scene
+render size and DLSS continue through the existing renderer.
+
+The widescreen installer accepts both original stage reads and the exact native stage
+pins supplied by this port's resolution patch. Synthetic-image regressions reject foreign
+code and verify 21:9/32:9 bounds and restoration to 16:9. Native input regressions cover
+neutral/sprint axes, diagonal walking, rebinding, capture release, triggers and identical
+mouse turns at 30/60/90 updates. The WPF verification adds INI persistence and duplicate
+Play protection. A joint DLSS Quality / 3440x1440 / 60 FPS gameplay test completed normally
+and the user confirmed it looked and controlled correctly. Original saves remain untouched.
+
+Still pending: two-client online gameplay and an in-game altar test once the save reaches it.
+Real 32:9 monitor testing and long sessions across multiple areas remain broader validation.

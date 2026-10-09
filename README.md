@@ -153,8 +153,20 @@ shader cache go to `user/` (the launcher lets you choose another folder); settin
 when several are connected; `BB_GAMEPAD=<GUID or part of the name>`). The keyboard works too,
 also next to a connected gamepad (the Steam Deck always has one); both are remapped in the
 launcher (*Controls*). The character name is typed on the keyboard in a box over the game.
-The touchpad: its left half (Tab, Back/Select) opens the gestures, the right half (Backspace)
-the key items.
+Windows PC controls ported from bbhost are enabled by default: WASD to move, Left Alt to walk,
+Space to dodge/sprint, Q to lock on, E to interact, R for Blood Vials, F for items, and Escape
+for the menu. Left mouse attacks (Shift for a strong attack), right mouse fires, and middle
+mouse transforms the weapon. G opens gestures and T personal effects. The mouse turns the
+native engine camera by raw counts, independent of FPS; it becomes a pointer in menus.
+Sensitivity, invert axes, auto-rotation and the pointer are configurable in the WPF launcher
+and System → PC Controls. System → Key Bindings captures a key, mouse button or wheel.
+The 29 actions use the same bbport.ini bind.* records in both frontends. Turning PC controls
+off in the launcher retains the previous key.* layout and controller mappings.
+
+Windows widescreen supports 21:9 and 32:9 outputs, including 3440x1440 and 5120x1440.
+The engine camera preserves vertical FOV, Scaleform stays uniformly centered, and projected
+lock-on/player markers expand their bounds correctly. Choose output resolution and enable
+Widescreen in the launcher; fixed-resolution sessions apply changes after restarting.
 
 **Resolution and preset changes:** for outputs other than 1080p (720p on the Steam Deck,
 1440p, 4K) the whole game renders at the preset's resolution, set by a patch at start — the

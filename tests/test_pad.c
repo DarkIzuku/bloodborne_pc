@@ -5,6 +5,9 @@
 
 static int capture;
 int bbgpu_overlay_captures_input(void) { return capture; }
+int bbgpu_pc_input(BbPcPad* p,const bool* keys,int n,int gamepad) {
+    (void)p;(void)keys;(void)n;(void)gamepad;return 0;
+}
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *name) {
     (void)table; (void)count; (void)name;
     return 0;

@@ -34,3 +34,22 @@ The surrounding bloodborne_pc code remains GPL-2.0-or-later under its existing n
 Combined builds containing these ports are distributed under GPL-3.0-or-later; see
 `GPL-3.0.txt`. Third-party notices remain unchanged. Generated game assets are local
 cache entries from the player's own dump and are not distributed in the repository.
+
+Keyboard/mouse and widescreen source:
+https://github.com/droogie/bbhost/tree/db5457cbd447f4ef129b58df0a78e0a8819c7033
+
+The input/bindings, mouse_camera and menu_pointer modules adapt the matching
+bbhost host and engine modules. They retain angle-per-count camera movement,
+controller priority, target flick, walking, region-aware confirmation, Scaleform
+geometry hit tests and capture semantics. input.cpp bridges the existing SDL
+event pump, scePad ABI, checked loader image and guest-call bridge.
+Native PC Controls / Key Bindings reuse the row builders, checked widget identity
+and Defaults lifecycle from option_menu.cpp. Both frontends use bbport.ini.
+
+engine/widescreen.cpp adapts the camera blend hook, UI stage pins and projected
+world-plate bounds from live_resolution.cpp and graphics_patch.cpp. It checks
+original bytes or the exact existing native-stage resolution patch, preserves
+vertical FOV and uses this port's output size. Vulkan UI composition adds uniform
+centered fitting, including stencil masks and window-space vertices. The existing
+presenter already letterboxes. The existing renderer, temporal resources,
+synchronization, shader and motion-vector paths remain in use.

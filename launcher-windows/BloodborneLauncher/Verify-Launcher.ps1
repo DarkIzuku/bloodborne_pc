@@ -53,7 +53,7 @@ static class Program
         Directory.CreateDirectory(Path.Combine(game,"sce_sys"));
         File.WriteAllText(Path.Combine(game,"eboot.bin"),"launcher test fixture");
         File.WriteAllText(Path.Combine(game,"sce_sys","param.sfo"),"01.09");
-        File.WriteAllText(Path.Combine(root,"run.bat"),"@echo off\r\nset BB_ > launch-env.txt\r\necho %* > launch-args.txt\r\n");
+        File.WriteAllText(Path.Combine(root,"run.bat"),"@echo off\r\nset BB_ > launch-env.txt\r\necho %* > launch-args.txt\r\necho session>>launch-count.txt\r\nping 127.0.0.1 -n 3 > nul\r\n");
         File.WriteAllText(Path.Combine(root,"bbport.ini"),"# keep this comment\r\nunrelated_setting=keep\r\nupscaler=off\r\n");
         foreach (string key in Environment.GetEnvironmentVariables().Keys)
             if(key.StartsWith("BB_")) Environment.SetEnvironmentVariable(key,null);
@@ -120,8 +120,13 @@ static class Program
         Get<ComboBox>("ResolutionCombo").SelectedIndex=2; Get<ComboBox>("ControllerCombo").SelectedIndex=2;
         foreach(var name in new[]{"CameraControlsCheck","ChangeAppearanceCheck","SharpenCheck","ShowFpsCheck","SsrCheck","SkipIntroCheck","DeveloperModeCheck","DetailedLogsCheck","FrameStatsCheck","AudioStatsCheck","FsrProfileCheck"}) Get<CheckBox>(name).IsChecked=true;
         foreach(var name in new[]{"ChromaticCheck","DofCheck","MotionBlurCheck","SsaoCheck","GameAaCheck","ShadowsCheck","ModsEnabledCheck"}) Get<CheckBox>(name).IsChecked=false;
+        Check(Get<DataGrid>("KeyBindingsGrid").Items.Count==29,"All supported actions in launcher");
+        Get<Slider>("MouseSensitivitySlider").Value=8;
+        Get<CheckBox>("MouseInvertYCheck").IsChecked=true;
+        var first=(MainWindow.KeyBindingRow)Get<DataGrid>("KeyBindingsGrid").Items[0];first.Binding="Z";
         Call("SaveSettings");
         string ini=File.ReadAllText(Path.Combine(root,"bbport.ini"));
+        foreach(var v in new[]{"widescreen=1","pc_controls=1","mouse_camera=1","mouse_menu=1","mouse_sensitivity=8","mouse_invert_y=1","bind.move_forward=Z","bind.attack=Mouse1"})Check(ini.Split("\r\n").Contains(v),"PC input/wide INI "+v);
         foreach(var expected in new[]{"rebirth=1","graphics_controls=1","graphics_vignette=0","graphics_ao_strength=0.40","graphics_shadow_scale=1.40","graphics_bloom=0.80","graphics_saturation=1.20"})
             Check(ini.Split("\r\n").Contains(expected),"Native engine option "+expected);
         foreach(var expected in new[]{"# keep this comment","unrelated_setting=keep","upscaler=fsr411","preset=3","sharpen=1","show_fps=1","output_res=2560x1440","fullscreen=1","live_resolution=auto","model_lod=-2","effect_chromatic_aberration=0","effect_dof=0","effect_motion_blur=0","effect_ssao=0","effect_game_aa=0","effect_dynamic_shadows=0","effect_ssr=1","skip_intro=1","change_appearance=1","camera_controls=1","camera_fov_scale=1.25","camera_distance_scale=0.80","camera_height_scale=1.20"}) Check(ini.Split("\r\n").Contains(expected),"INI "+expected);
@@ -133,8 +138,11 @@ static class Program
         }
         Check(File.ReadAllText(Path.Combine(root,"out","game_dir.txt"))==game,"Remembered path");
         Call("Play_Click", Get<Button>("PlayButton"),new RoutedEventArgs());
+        Call("Play_Click", Get<Button>("PlayButton"),new RoutedEventArgs());
         var envPath=Path.Combine(root,"launch-env.txt");
         for(int i=0;i<100 && !File.Exists(envPath);i++) Thread.Sleep(50);
+        Thread.Sleep(200);
+        Check(File.ReadAllLines(Path.Combine(root,"launch-count.txt")).Length==1,"Play cannot start duplicate sessions");
         string env=File.ReadAllText(envPath);
         foreach(var expected in new[]{"BB_PREBUILT=1","BB_DATA_DIR="+root.TrimEnd(Path.DirectorySeparatorChar),"BB_CONFIG="+Path.Combine(root.TrimEnd(Path.DirectorySeparatorChar),"bbport.ini"),"BB_GAME_DIR="+game,"BB_FPS=90","BB_FPS_LIMIT=90","BB_VBLANK_HZ=90","BB_LANGUAGE=3","BB_GAMEPAD_INDEX=2","BB_MODS_ENABLED=0","BB_PRESENT_MODE=FifoRelaxed","BB_DLSS_LOG=1","BB_FRAME_STATS=1","BB_AUDIO_STATS=1","BB_FSR4_PROFILE=1"}) Check(env.Split("\r\n").Contains(expected),"Launch environment "+expected);
         Check(File.ReadAllText(Path.Combine(root,"launch-args.txt")).Contains("--game-dir \""+game+"\""),"Launch path quoting");
