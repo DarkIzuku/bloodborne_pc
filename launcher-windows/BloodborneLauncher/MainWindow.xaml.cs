@@ -54,6 +54,17 @@ public partial class MainWindow : Window
         public bool FrameStats { get; set; }
         public bool AudioStats { get; set; }
         public bool FsrProfile { get; set; }
+        public bool OnlineEnabled { get; set; }
+        public bool OnlineConnected { get; set; } = true;
+        public bool OnlineUpnp { get; set; }
+        public bool OnlineRemember { get; set; }
+        public string OnlineHost { get; set; } = "";
+        public string OnlinePort { get; set; } = "31313";
+        public string OnlineP2pPort { get; set; } = "";
+        public string OnlineWebApi { get; set; } = "";
+        public string OnlineGameApi { get; set; } = "";
+        public string OnlineWebsite { get; set; } = "";
+        public string OnlineUsername { get; set; } = "";
     }
 
     readonly string root;
@@ -125,6 +136,7 @@ public partial class MainWindow : Window
         state.CameraFov = CameraScale(ReadIniValue("camera_fov_scale") ?? state.CameraFov, 1);
         state.CameraDistance = CameraScale(ReadIniValue("camera_distance_scale") ?? state.CameraDistance, 0.5);
         state.CameraHeight = CameraScale(ReadIniValue("camera_height_scale") ?? state.CameraHeight, 0.5);
+        LoadOnlineState();
     }
 
     static string NormalizeFps(string? value) => value is "30" or "60" or "90" ? value : "60";
@@ -230,6 +242,7 @@ public partial class MainWindow : Window
         AudioStatsCheck.IsChecked = state.AudioStats;
         FsrProfileCheck.IsChecked = state.FsrProfile;
         syncing = false;
+        ApplyOnlineUi();
     }
 
     void CollectUi()
@@ -273,10 +286,13 @@ public partial class MainWindow : Window
         state.FrameStats = FrameStatsCheck.IsChecked == true;
         state.AudioStats = AudioStatsCheck.IsChecked == true;
         state.FsrProfile = FsrProfileCheck.IsChecked == true;
+        CollectOnlineUi();
     }
 
-    void SaveSettings()
+    bool SaveSettings()
     {
+        try
+        {
         CollectUi();
         Directory.CreateDirectory(Path.Combine(root, "out"));
         File.WriteAllText(statePath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
@@ -315,8 +331,17 @@ public partial class MainWindow : Window
             ["camera_height_scale"] = state.CameraHeight
         };
         RewriteIni(Path.Combine(root, "bbport.ini"), ini);
+        SaveOnlineSettings();
         FooterMessage.Text = "Settings saved";
         RefreshStatus();
+        return true;
+        }
+        catch (Exception error)
+        {
+            FooterMessage.Text = "No se pudieron guardar las opciones: " + error.Message;
+            OnlineStatus.Text = FooterMessage.Text;
+            return false;
+        }
     }
 
     static void RewriteIni(string path, Dictionary<string, string> values)
@@ -466,7 +491,8 @@ public partial class MainWindow : Window
 
     void Play_Click(object sender, RoutedEventArgs e)
     {
-        SaveSettings();
+        if (!SaveSettings()) return;
+        if (!ValidateOnlineForLaunch()) return;
         if (!File.Exists(Path.Combine(state.GamePath, "eboot.bin")))
         {
             MessageBox.Show("Select a valid Bloodborne folder first.", "Bloodborne PC", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -513,6 +539,7 @@ public partial class MainWindow : Window
             if (state.DeveloperMode && state.FrameStats) psi.Environment["BB_FRAME_STATS"] = "1";
             if (state.DeveloperMode && state.AudioStats) psi.Environment["BB_AUDIO_STATS"] = "1";
             if (state.DeveloperMode && state.FsrProfile) psi.Environment["BB_FSR4_PROFILE"] = "1";
+            ConfigureOnlineLaunch(psi);
             var gameProcess = new Process
             {
                 StartInfo = psi,
@@ -575,7 +602,7 @@ public partial class MainWindow : Window
     {
         if (sender is not Button button) return;
         string page = button.CommandParameter?.ToString() ?? "Home";
-        foreach (var b in new[] { NavHome, NavGeneral, NavGraphics, NavPerformance, NavController, NavMods, NavAdvanced }) b.Tag = null;
+        foreach (var b in new[] { NavHome, NavGeneral, NavGraphics, NavPerformance, NavController, NavOnline, NavMods, NavAdvanced }) b.Tag = null;
         button.Tag = "active";
         HomePage.Visibility = page == "Home" ? Visibility.Visible : Visibility.Collapsed;
         SettingsScrim.Visibility = page == "Home" ? Visibility.Collapsed : Visibility.Visible;
@@ -584,6 +611,7 @@ public partial class MainWindow : Window
         PerformancePage.Visibility = page == "Performance" ? Visibility.Visible : Visibility.Collapsed;
         ControllerPage.Visibility = page == "Controller" ? Visibility.Visible : Visibility.Collapsed;
         ModsPage.Visibility = page == "Mods" ? Visibility.Visible : Visibility.Collapsed;
+        OnlinePage.Visibility = page == "Online" ? Visibility.Visible : Visibility.Collapsed;
         AdvancedPage.Visibility = page == "Advanced" ? Visibility.Visible : Visibility.Collapsed;
     }
 

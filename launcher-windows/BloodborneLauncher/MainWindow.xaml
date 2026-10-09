@@ -89,6 +89,12 @@
                                         <TextBlock Text="Controller" FontFamily="Georgia" FontSize="18" VerticalAlignment="Center" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                                     </StackPanel>
                                 </Button>
+                                <Button x:Name="NavOnline" Style="{StaticResource NavButton}" CommandParameter="Online" Click="Nav_Click" AutomationProperties.Name="Online">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="" FontFamily="Segoe MDL2 Assets" FontSize="21" Width="38" VerticalAlignment="Center" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                                        <TextBlock Text="Online" FontFamily="Georgia" FontSize="18" VerticalAlignment="Center" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                                    </StackPanel>
+                                </Button>
                                 <Button x:Name="NavMods" Style="{StaticResource NavButton}" CommandParameter="Mods" Click="Nav_Click" AutomationProperties.Name="Mods">
                                     <StackPanel Orientation="Horizontal">
                                         <TextBlock Text="" FontFamily="Segoe MDL2 Assets" FontSize="21" Width="38" VerticalAlignment="Center" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
@@ -144,7 +150,6 @@
                                     </Border.Background>
                                 </Border>
                                 <TextBlock Text="B L O O D B O R N E   P C" FontFamily="Georgia" FontSize="22" Margin="18,0,0,0" />
-                                <TextBlock Text="N A T I V E   W I N D O W S   R U N T I M E   ·   O F F L I N E" FontSize="9" Foreground="#B7AD9E" Margin="19,10,0,18" />
                                 <ContentControl Style="{StaticResource OrnatePanel}">
                                     <StackPanel>
                                         <DockPanel Margin="0,0,0,14">
@@ -450,6 +455,44 @@
                                         <ComboBoxItem Content="Gamepad 4" Tag="3" />
                                     </ComboBox>
                                     <TextBlock TextWrapping="Wrap" Text="Controller detection remains automatic when devices are connected." Foreground="#AFA69A" Margin="0,10,0,0" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                    <!-- ONLINE -->
+                    <ScrollViewer x:Name="OnlinePage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                        <StackPanel MaxWidth="1040" Margin="36,28,36,28" HorizontalAlignment="Stretch">
+                            <TextBlock Text="ONLINE" FontSize="28" FontFamily="Georgia" />
+                            <TextBlock Text="Configura tu servidor shadNet y entra con la cuenta creada en su página." Foreground="#B0A89C" Margin="0,4,0,24" TextWrapping="Wrap" />
+                            <Border Style="{StaticResource CardStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="CONEXIÓN" Style="{StaticResource SectionTitle}" />
+                                    <CheckBox x:Name="OnlineEnabledCheck" Content="Jugar online con shadNet" />
+                                    <CheckBox x:Name="OnlineConnectedCheck" Content="Red conectada para el juego" IsChecked="True" Margin="0,10,0,16" />
+                                    <UniformGrid Columns="2">
+                                        <StackPanel Margin="0,0,12,12"><TextBlock Text="IP o nombre del servidor" /><TextBox x:Name="OnlineHostBox" AutomationProperties.Name="shadNet server" Margin="0,6,0,0" /></StackPanel>
+                                        <StackPanel Margin="0,0,0,12"><TextBlock Text="Puerto TCP de shadNet" /><TextBox x:Name="OnlinePortBox" AutomationProperties.Name="shadNet TCP port" Margin="0,6,0,0" /></StackPanel>
+                                    </UniformGrid>
+                                    <TextBlock Text="URL de WebAPI (incluye el puerto)" /><TextBox x:Name="OnlineWebApiBox" AutomationProperties.Name="shadNet WebAPI URL" Margin="0,6,0,12" />
+                                    <TextBlock Text="API del juego (vacío = la misma WebAPI)" /><TextBox x:Name="OnlineGameApiBox" AutomationProperties.Name="Bloodborne game API URL" Margin="0,6,0,12" />
+                                    <TextBlock Text="Página de cuentas / registro" /><TextBox x:Name="OnlineWebsiteBox" AutomationProperties.Name="Account website" Margin="0,6,0,12" />
+                                    <CheckBox x:Name="OnlineUpnpCheck" Content="UPnP para conexiones entre jugadores" />
+                                    <TextBlock Text="Puerto UDP P2P local (vacío = automático)" Margin="0,12,0,0" /><TextBox x:Name="OnlineP2pPortBox" AutomationProperties.Name="Local P2P UDP port" Margin="0,6,0,0" />
+                                    <TextBlock Text="La redirección del juego se prepara automáticamente. No tienes que editar host_overrides.json. Las direcciones se guardan solo en tu configuración local." Foreground="#9CA3A9" TextWrapping="Wrap" Margin="0,12,0,0" />
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource CardStyle}">
+                                <StackPanel>
+                                    <TextBlock Text="CUENTA" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Nombre de cuenta shadNet" /><TextBox x:Name="OnlineUsernameBox" AutomationProperties.Name="shadNet username" MaxLength="16" Margin="0,6,0,12" />
+                                    <TextBlock Text="Contraseña" /><PasswordBox x:Name="OnlinePasswordBox" AutomationProperties.Name="shadNet password" Background="#0C1011" Foreground="#E8E0D6" BorderBrush="#6B5B45" Padding="12" Margin="0,6,0,12" />
+                                    <TextBlock Text="Token de validación (solo si el servidor lo pide)" /><PasswordBox x:Name="OnlineTokenBox" AutomationProperties.Name="Account validation token" Background="#0C1011" Foreground="#E8E0D6" BorderBrush="#6B5B45" Padding="12" Margin="0,6,0,12" />
+                                    <CheckBox x:Name="OnlineRememberCheck" Content="Recordar la cuenta de forma protegida en este Windows" />
+                                    <WrapPanel Margin="0,16,0,0">
+                                        <Button x:Name="OnlineProbeButton" Content="Comprobar servidor" Click="OnlineProbe_Click" Margin="0,0,12,8" />
+                                        <Button Content="Abrir página / crear cuenta" Click="OnlineWebsite_Click" Margin="0,0,0,8" />
+                                    </WrapPanel>
+                                    <TextBlock x:Name="OnlineStatus" Text="Introduce las direcciones, guarda las opciones y pulsa PLAY. La conexión dentro del juego y el multijugador se comprueban por separado." Foreground="#B9C2C7" TextWrapping="Wrap" Margin="0,12,0,0" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>

@@ -112,6 +112,12 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault('BB_CONFIG', str(data / 'bbport.ini'))
     config = Path(os.environ['BB_CONFIG'])
+    from online import configure_online, read_settings
+    try:
+        override = configure_online(read_settings(config) if config.exists() else {}, data, os.environ)
+        print('Online: configured server profile and automatic game redirect' if override else 'Online: offline mode')
+    except (OSError, ValueError) as error:
+        sys.exit(f'Online configuration: {error}')
     if 'BB_FSR411_DIR' not in os.environ and not (ROOT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         os.environ['BB_FSR411_DIR'] = str(data / 'fsr4_411')
     # The last folder that worked is remembered, so run.bat alone starts the game afterwards.

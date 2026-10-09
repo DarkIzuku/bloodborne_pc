@@ -69,6 +69,9 @@ static class Program
         Check(Get<TextBlock>("DlssStatus").Text=="Model DLL not installed","Missing DLSS status");
         Check(Get<TextBlock>("Fsr4Status").Text=="Assets not installed","Missing FSR4 status");
         Check(Get<Image>("HeroImage").Source is BitmapSource, "Embedded hero not loaded");
+        foreach(var name in new[]{"OnlineHostBox","OnlineWebApiBox","OnlineGameApiBox","OnlineWebsiteBox","OnlineUsernameBox","OnlineP2pPortBox"})
+            Check(Get<TextBox>(name).Text=="","Online must have no preconfigured address/account: "+name);
+        Check(Get<CheckBox>("OnlineEnabledCheck").IsChecked==false,"Online is opt-in");
         Render(Path.Combine(output,"launcher-play-unconfigured.png"));
         Get<TextBox>("PathBox").Text=game; Call("RefreshStatus");
         Check(Get<Button>("PlayButton").IsEnabled,"Valid fixture should enable Play");
@@ -136,7 +139,7 @@ static class Program
         foreach(var expected in new[]{"BB_PREBUILT=1","BB_DATA_DIR="+root.TrimEnd(Path.DirectorySeparatorChar),"BB_CONFIG="+Path.Combine(root.TrimEnd(Path.DirectorySeparatorChar),"bbport.ini"),"BB_GAME_DIR="+game,"BB_FPS=90","BB_FPS_LIMIT=90","BB_VBLANK_HZ=90","BB_LANGUAGE=3","BB_GAMEPAD_INDEX=2","BB_MODS_ENABLED=0","BB_PRESENT_MODE=FifoRelaxed","BB_DLSS_LOG=1","BB_FRAME_STATS=1","BB_AUDIO_STATS=1","BB_FSR4_PROFILE=1"}) Check(env.Split("\r\n").Contains(expected),"Launch environment "+expected);
         Check(File.ReadAllText(Path.Combine(root,"launch-args.txt")).Contains("--game-dir \""+game+"\""),"Launch path quoting");
         Render(Path.Combine(output,"launcher-play.png"));
-        foreach(var page in new[]{"General","Graphics","Performance","Controller","Mods","Advanced"}) {
+        foreach(var page in new[]{"General","Graphics","Performance","Controller","Online","Mods","Advanced"}) {
             ClickNav(page); Pump();
             Check(Get<FrameworkElement>(page+"Page").Visibility==Visibility.Visible,"Navigation "+page);
             Check(Get<FrameworkElement>("HomePage").Visibility==Visibility.Collapsed,"Home hidden "+page);
@@ -198,6 +201,45 @@ static class Program
         File.WriteAllText(Path.Combine(root,"bbport.ini"),runtimeIni.Replace("graphics_bloom=0.80","graphics_bloom=0.60").Replace("rebirth=1","rebirth=0").Replace("effect_ssao=0","effect_ssao=1"));
         Call("LoadState"); Call("ApplyStateToUi");
         Check(Tag("GraphicsBloomCombo")=="0.60" && Get<CheckBox>("RebirthCheck").IsChecked==false && Get<CheckBox>("SsaoCheck").IsChecked==true,"Native pages remain authoritative over stale launcher JSON");
+        Get<TextBox>("OnlineHostBox").Text="server.example";
+        Get<TextBox>("OnlinePortBox").Text="31413";
+        Get<TextBox>("OnlineWebApiBox").Text="http://server.example:31415";
+        Get<TextBox>("OnlineGameApiBox").Text="https://game.example:34443";
+        Get<TextBox>("OnlineWebsiteBox").Text="https://accounts.example:34416";
+        Get<TextBox>("OnlineUsernameBox").Text="TestHunter";
+        Get<TextBox>("OnlineP2pPortBox").Text="32000";
+        Get<PasswordBox>("OnlinePasswordBox").Password="SYNTHETIC-SECRET";
+        Get<PasswordBox>("OnlineTokenBox").Password="SYNTHETIC-TOKEN";
+        foreach(var name in new[]{"OnlineEnabledCheck","OnlineConnectedCheck","OnlineRememberCheck"}) Get<CheckBox>(name).IsChecked=true;
+        Call("SaveSettings");
+        string onlineIni=File.ReadAllText(Path.Combine(root,"bbport.ini"));
+        foreach(var expected in new[]{"online_enabled=1","online_host=server.example","online_port=31413","online_webapi=http://server.example:31415","online_game_api=https://game.example:34443","online_website=https://accounts.example:34416","online_p2p_port=32000","online_username=TestHunter"})
+            Check(onlineIni.Split("\r\n").Contains(expected),"Online INI "+expected);
+        foreach(var path in new[]{"bbport.ini","launcher-settings.json"})
+            Check(!File.ReadAllText(Path.Combine(root,path)).Contains("SYNTHETIC-"),"Secrets excluded from settings: "+path);
+        var protectedAccount=Directory.GetFiles(Path.Combine(root,"user","accounts"),"*.bin").Single();
+        Check(!System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(protectedAccount)).Contains("SYNTHETIC-SECRET"),"Windows-protected account on disk");
+        Call("LoadState"); Call("ApplyStateToUi");
+        Check(Get<PasswordBox>("OnlinePasswordBox").Password=="SYNTHETIC-SECRET" && Get<PasswordBox>("OnlineTokenBox").Password=="SYNTHETIC-TOKEN","Protected account reload");
+        Check(Get<TextBox>("OnlineWebApiBox").Text=="http://server.example:31415","Server port survives reload");
+        var start=new System.Diagnostics.ProcessStartInfo();
+        start.Environment["SHADPS4_HTTP_HOST_OVERRIDES_JSON"]="unrelated-app.json";
+        Call("ConfigureOnlineLaunch",start);
+        Check(start.Environment["BB_ONLINE"]=="1" && start.Environment["BB_SHADNET_SERVER"]=="server.example:31413","Explicit selected server environment");
+        Check(start.Environment["BB_SHADNET_PASSWORD"]=="SYNTHETIC-SECRET" && start.Environment["SHADPS4_P2P_PORT"]=="32000","Account and selected P2P port reach child");
+        Check(!start.Environment.ContainsKey("SHADPS4_HTTP_HOST_OVERRIDES_JSON"),"Python must generate our own override");
+        Get<TextBox>("OnlineP2pPortBox").Text="65536";
+        bool onlineSaved=(bool)typeof(MainWindow).GetMethod("SaveSettings",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(window,null)!;
+        Check(!onlineSaved,"Bad online port does not crash or launch");
+        Get<TextBox>("OnlineP2pPortBox").Text="32000";
+        Get<CheckBox>("OnlineEnabledCheck").IsChecked=false;
+        Get<CheckBox>("OnlineRememberCheck").IsChecked=false;
+        Call("SaveSettings");
+        Call("ConfigureOnlineLaunch",start);
+        Check(start.Environment["BB_ONLINE"]=="0" && !start.Environment.ContainsKey("BB_SHADNET_PASSWORD") && !start.Environment.ContainsKey("SHADPS4_P2P_PORT"),"Offline removes inherited online credentials and ports");
+        Check(!File.Exists(protectedAccount),"Unchecking remember forgets account");
+        Call("LoadState"); Call("ApplyStateToUi");
+        Check(Get<PasswordBox>("OnlinePasswordBox").Password.Length==0,"Forgotten account is not restored");
         Console.WriteLine($"PASS: {assertions} assertions; settings, navigation, all quick options, launch environment and artwork.");
         window.Close(); app.Shutdown();
     }
