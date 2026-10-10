@@ -1150,8 +1150,8 @@ int main(int argc, char** argv) {
 #else
     for (int i=0;i<argc;++i) args.emplace_back(argv[i]);
 #endif
-    if (args.size()!=4 || (args[1]!="movie" && args[1]!="messages" && args[1]!="rebirth")) {
-        std::fputs("Usage: bb-engine-assets movie|messages|rebirth INPUT OUTPUT\n",stderr); return 2;
+    if (args.size()!=4 || (args[1]!="movie" && args[1]!="messages" && args[1]!="rebirth" && args[1]!="title")) {
+        std::fputs("Usage: bb-engine-assets movie|messages|rebirth|title INPUT OUTPUT\n",stderr); return 2;
     }
     try {
         if (std::filesystem::equivalent(args[2],args[3])) { std::fputs("Engine menu assets: output must differ from source\n",stderr); return 1; }
@@ -1162,7 +1162,8 @@ int main(int argc, char** argv) {
         Bytes raw(static_cast<std::size_t>(in.tellg()));
         in.seekg(0);
         if (!in.read(reinterpret_cast<char*>(raw.data()),raw.size())) throw Fail{"read source"};
-        Bytes result=args[1]=="movie" ? build_option_movie(raw) : args[1]=="rebirth" ? build_rebirth(raw) : build_menu_messages(raw);
+        Bytes result=args[1]=="movie" ? build_option_movie(raw) : args[1]=="rebirth" ? build_rebirth(raw) :
+                     args[1]=="title" ? add_list_slot(raw,"CommandList") : build_menu_messages(raw);
         std::ofstream out(args[3],std::ios::binary|std::ios::trunc);
         if (!out || !out.write(reinterpret_cast<const char*>(result.data()),result.size())) throw Fail{"write cache"};
         return 0;

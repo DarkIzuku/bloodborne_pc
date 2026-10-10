@@ -11,6 +11,7 @@ extern std::uint32_t menu_confirm_button();
 extern std::uint32_t menu_back_button();
 extern std::uint32_t input_delivered_buttons();
 #include <chrono>
+#include <SDL3/SDL.h>
 #include "bbport_platform.h"
 #include "bbport_settings.h"
 #include <algorithm>
@@ -723,6 +724,49 @@ GUEST_ABI void* SystemFinalize(void* out,void* builder,void* arg3) {
     host_log("pc-options: System list includes PC Enhancements%s%s",graphics_page?", PC Graphics / PC Effects":"",camera_page?", PC Camera":"");
     return out;
 }
+
+// Quit Game on the title menu, adapted from bbhost engine/option_menu.cpp. The title's
+// command list (sub_1f4a3d0: Continue, Load Game, New Game, System, Log In) is finalised
+// by one call, sub_1fea820 at 0x1f4adb3; TitleFinalize adds a "Quit Game" row first
+// (sub_1f4c9a0, the way System's Exit Game is added). Its opener is built like the
+// game's own Exit Game opener (sub_200c9f0): a message box from a group-204 caption
+// (sub_201ed10), a YES command around an action (sub_1d5db60) and the popup of the two
+// (sub_201a070), so the question is the menu's own, modal, with YES and NO. YES pushes
+// SDL_EVENT_QUIT: the same shutdown as closing the window. The movie's sixth line is
+// menu_assets' title mode.
+constexpr std::uint64_t kTitleFinalize=0x1fea820,kAddExitRow=0x1f4c9a0;
+constexpr std::uint64_t kMessageBox=0x201ed10,kYesCommand=0x1d5db60,kPopup=0x201a070;
+constexpr std::uint32_t kQuitRowId=122000,kQuitQuestion=920001,kMsgDialogText=0xcc;
+GUEST_ABI std::int64_t QuitYes(std::int64_t,std::int64_t) {
+    host_log("pc-options: Quit Game");
+    SDL_Event quit{}; quit.type=SDL_EVENT_QUIT; SDL_PushEvent(&quit);
+    return 0;
+}
+void release_engine_ref(std::uint64_t obj) {
+    if (!obj) return;
+    auto* rc=reinterpret_cast<std::int32_t*>(obj+8);
+    if ((*rc)--!=1) return;
+    std::uint64_t vt=0,dtor=0;
+    std::memcpy(&vt,reinterpret_cast<void*>(obj),8); std::memcpy(&dtor,reinterpret_cast<void*>(vt),8);
+    Call(dtor,obj);
+}
+GUEST_ABI void* QuitOpener(void* out,void* factory) {
+    alignas(16) std::uint8_t caption[0x40]{};
+    hle_call_guest<std::int64_t>(guest_fn(kMsgRepository),&caption[0],kMsgDialogText,kQuitQuestion);
+    std::uint64_t box=0,command=0;
+    hle_call_guest<std::int64_t>(guest_fn(kMessageBox),&box,factory,&caption[0]);
+    GuestFunction action(kOpenerFunctorVTable,reinterpret_cast<void*>(&QuitYes));
+    hle_call_guest<std::int64_t>(guest_fn(kYesCommand),&command,action.buf,2);
+    hle_call_guest<std::int64_t>(guest_fn(kPopup),out,&box,&command);
+    release_engine_ref(command); release_engine_ref(box);
+    Captions::free_wstring(&caption[0x08]);
+    return out;
+}
+GUEST_ABI std::int64_t TitleFinalize(void* out,void* builder,void* arg3) {
+    { Captions c(kQuitRowId);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&QuitOpener));
+      hle_call_guest<std::int64_t>(guest_fn(kAddExitRow),builder,c.buf,f.buf); }
+    return hle_call_guest<std::int64_t>(guest_fn(kTitleFinalize),out,builder,arg3);
+}
 } // namespace
 
 bool Install(std::uint8_t* image,std::size_t size) {
@@ -743,6 +787,7 @@ bool Install(std::uint8_t* image,std::size_t size) {
     }
     namespace fs=std::filesystem;
     std::vector<std::pair<std::string,std::string>> mounts;
+    bool title_quit=false;
     try {
         const fs::path root=fs::u8path(assets),original=fs::u8path(game);
         auto add=[&](const fs::path& relative) {
@@ -761,6 +806,10 @@ bool Install(std::uint8_t* image,std::size_t size) {
             if (fs::is_regular_file(original/relative) && !add(relative)) return false;
         }
         if (mounts.size()<2 || mounts.size()>24) return false;
+        // Quit Game needs every title movie the dump has prepared with its sixth line.
+        title_quit=true;
+        for (const char* movie:{"dvdroot_ps4/menu/title.gfx","dvdroot_ps4/menu/title_dlc.gfx","dvdroot_ps4/menu/title_dlc_eu.gfx"})
+            if (fs::is_regular_file(original/movie)) title_quit=add(movie) && title_quit;
     } catch (const std::exception& e) { host_log("pc-options disabled: %s",e.what()); return false; }
     unsigned installed=0;
     for (const auto& [path,file]:mounts) {
@@ -796,6 +845,21 @@ bool Install(std::uint8_t* image,std::size_t size) {
     const auto target=reinterpret_cast<std::uint64_t>(&SystemFinalize);
     std::memcpy(p,&target,8); p+=8; *p++=0x41; *p++=0xff; *p=0xe3;
     const std::int32_t to_pad=pad-(call+5); std::memcpy(image+call+1,&to_pad,4);
+    // Title Quit Game: the same redirect for the title list's finalise call, through
+    // alignment padding after a non-returning call (verified 1.09 bytes).
+    constexpr std::size_t tcall=0x1b4adb3,tpad=0x1b25c20;
+    std::int32_t trel=0;
+    if (title_quit && size>=tcall+5) std::memcpy(&trel,image+tcall+1,4);
+    if (title_quit && size>=tpad+16 && image[tcall]==0xe8 && static_cast<std::int64_t>(tcall+5)+trel==0x1bea820 &&
+        !std::memcmp(image+tpad,expected,16)) {
+        std::uint8_t* q=image+tpad; *q++=0x49; *q++=0xbb;
+        const auto title=reinterpret_cast<std::uint64_t>(&TitleFinalize);
+        std::memcpy(q,&title,8); q+=8; *q++=0x41; *q++=0xff; *q=0xe3;
+        const std::int32_t to_tpad=tpad-(tcall+5); std::memcpy(image+tcall+1,&to_tpad,4);
+        host_log("pc-options: title menu Quit Game installed");
+    } else {
+        host_log("pc-options: title menu Quit Game not installed (%s)",title_quit?"bytes differ from verified 1.09":"title movies not prepared");
+    }
     g_installed=true;
     host_log("pc-options: native System pages installed (%u local assets): Enhancements%s%s",installed,graphics_page?", Graphics / Effects":"",camera_page?", Camera":"");
     return true;

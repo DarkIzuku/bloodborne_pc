@@ -63,6 +63,29 @@ class EngineAssetTests(unittest.TestCase):
                 engine_assets.prepare_menu_assets(game, root / 'eboot', root / 'cache', tool)
                 self.assertEqual(len(calls), 6)
 
+    def test_title_movies_get_the_quit_game_slot(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            game = root / 'game'
+            for name in ('menu/optionsetting.gfx', 'msg/engus/menu.msgbnd.dcx', 'menu/title.gfx', 'menu/title_dlc.gfx',
+                         'menu/title_dlc_eu.gfx'):
+                p = game / 'dvdroot_ps4' / name
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_bytes(b'own dump')
+            tool = root / 'tool'
+            tool.write_bytes(b'tool')
+            calls = []
+            def generate(args, **kwargs):
+                calls.append((args[1], Path(args[2]).name))
+                Path(args[3]).write_bytes(b'prepared')
+                return SimpleNamespace(returncode=0, stderr='')
+            with patch.object(engine_assets, 'verify_executable'), patch.object(engine_assets.subprocess, 'run', generate):
+                cache = engine_assets.prepare_menu_assets(game, root / 'eboot', root / 'cache', tool)
+            self.assertIn(('title', 'title.gfx'), calls)
+            self.assertIn(('title', 'title_dlc.gfx'), calls)
+            self.assertIn(('title', 'title_dlc_eu.gfx'), calls)
+            self.assertTrue((cache / 'dvdroot_ps4/menu/title.gfx').is_file())
+
     def test_menu_generation_failure_does_not_publish_manifest_or_change_source(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
