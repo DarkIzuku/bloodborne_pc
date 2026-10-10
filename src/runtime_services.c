@@ -10,10 +10,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifndef _WIN32
-#include <pthread.h>
 #include <time.h>
+#ifdef _WIN32
+#define htons(v) __builtin_bswap16(v)
+#define ntohs(v) __builtin_bswap16(v)
+#define htonl(v) __builtin_bswap32(v)
+#define ntohl(v) __builtin_bswap32(v)
+#else
 #include <arpa/inet.h>
+#endif
 
 #define USER_ID 1
 #define ORBIS_OK 0
@@ -36,9 +41,9 @@
 #define AUDIO_IN_NOT_OPENED ((int32_t)0x80260109)
 #define TROPHY_INVALID ((int32_t)0x80551604)
 
-static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
+static HostMutex lock=HOST_MUTEX_INIT;
 static int next_id=1;
-static int new_id(void) { pthread_mutex_lock(&lock); int id=next_id++; pthread_mutex_unlock(&lock); return id; }
+static int new_id(void) { host_lock(&lock); int id=next_id++; host_unlock(&lock); return id; }
 static void note(const char *what) { printf("Runtime: %s\n",what); }
 
 /* ---- UserService ---- */
@@ -58,9 +63,9 @@ static ABI int32_t user_name(int32_t id,char *name,uint64_t size) {
 }
 static ABI int32_t user_event(int32_t *event) {
     if (!event) return USER_INVALID_ARGUMENT;
-    pthread_mutex_lock(&lock);
+    host_lock(&lock);
     int pending=login_event_pending; login_event_pending=0;
-    pthread_mutex_unlock(&lock);
+    host_unlock(&lock);
     if (!pending) return USER_NO_EVENT;
     event[0]=0; event[1]=USER_ID; /* LOGIN */
     return 0;
@@ -74,7 +79,11 @@ static ABI int32_t system_param(int32_t id,int32_t *value) {
     case 1: *value=language(); break;           /* language (1 = English US, 8 = Russian) */
     case 2: *value=1; break;                    /* date format DD/MM/YYYY */
     case 3: *value=1; break;                    /* 24-hour clock */
+#ifdef _WIN32
+    case 4: *value=(int32_t)(runtime_utc_offset(time(NULL))/60); break;
+#else
     case 4: { time_t now=time(NULL); struct tm t; localtime_r(&now,&t); *value=(int32_t)(t.tm_gmtoff/60); break; }
+#endif
     case 5: *value=0; break;                    /* summer time */
     case 7: *value=0; break;                    /* parental level off */
     case 1000: *value=1; break;                 /* enter button = cross */
@@ -109,11 +118,19 @@ static ABI uint32_t net_htonl(uint32_t v) { return htonl(v); }
 static ABI uint32_t net_ntohl(uint32_t v) { return ntohl(v); }
 static ABI int32_t net_pton(int af,const char *src,void *dst) {
     if (af!=2) { net_errno=47; return NET_EINVAL; }
+#ifdef _WIN32
+    return runtime_win_inet_pton4(src,dst);
+#else
     return inet_pton(AF_INET,src,dst);
+#endif
 }
 static ABI const char *net_ntop(int af,const void *src,char *dst,uint32_t size) {
     if (af!=2) { net_errno=47; return NULL; }
+#ifdef _WIN32
+    return runtime_win_inet_ntop4(src,dst,size);
+#else
     return inet_ntop(AF_INET,src,dst,size);
+#endif
 }
 static ABI int32_t netctl_state(int32_t *state) { if (!state) return NET_CTL_INVALID_ADDR; *state=0; return 0; }
 static ABI int32_t netctl_info(int code,void *info) { (void)code; (void)info; return NET_CTL_NOT_CONNECTED; }
@@ -137,7 +154,7 @@ static ABI int32_t http_epoll(int32_t ctx,void **handle) {
 }
 static ABI int32_t http_wait(void *handle,void *events,int32_t max,int64_t timeout) {
     (void)handle; (void)events; (void)max;
-    if (timeout>0) { struct timespec t={timeout/1000000,(timeout%1000000)*1000}; nanosleep(&t,NULL); }
+    if (timeout>0) host_sleep_ns((uint64_t)timeout*1000);
     return 0; /* no events: nothing is in flight */
 }
 
@@ -173,8 +190,7 @@ static ABI int32_t voice_info(uint32_t port,uint32_t *info) {
 typedef struct { const char *name; int initialized, status; } Dialog;
 static Dialog dialogs[]={{"CommonDialog",0,0},{"MsgDialog",0,0},{"SaveDataDialog",0,0},
                          {"NpProfileDialog",0,0},{"NpCommerceDialog",0,0},{"ImeDialog",0,0}};
-static int common_initialized;
-static ABI int32_t common_init(void) { common_initialized=1; return 0; }
+static ABI int32_t common_init(void) { return 0; }
 static int32_t dialog_init(int i) {
     if (dialogs[i].initialized) return (int32_t)0x80B80004;
     dialogs[i].initialized=1; dialogs[i].status=1; return 0;
@@ -467,7 +483,26 @@ static const RuntimeExport exports[]={
     {"sceDiscMapIsRequestOnHDD",discmap_on_hdd}, {"sceDiscMap_8A828CAEE7EDD5E9",discmap_8a82},
     {"sceVoiceInit",ok_void}, {"sceVoiceEnd",ok_void},
 };
-uintptr_t runtime_services_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
-#else
-uintptr_t runtime_services_resolve(const char *name) { (void)name; return 0; }
-#endif
+/* Opt-in native networking. Saves, trophies and dialogs retain their local contracts. */
+static int online_symbol(const char *symbol) {
+    static const char *const prefixes[]={"sceNet","sceNp","sceHttp","sceSsl"};
+    static const char *const local[]={"sceNpTrophy","sceNpCommerce","sceNpProfileDialog"};
+    int online=0;
+    for (size_t i=0;i<sizeof(prefixes)/sizeof(*prefixes);++i)
+        if (!strncmp(symbol,prefixes[i],strlen(prefixes[i]))) online=1;
+    for (size_t i=0;i<sizeof(local)/sizeof(*local);++i)
+        if (!strncmp(symbol,local[i],strlen(local[i]))) online=0;
+    return online;
+}
+uintptr_t runtime_services_resolve(const char *name) {
+    const char *enabled=getenv("BB_ONLINE");
+    if (enabled && enabled[0]=='1') {
+        const char *symbol=runtime_symbol(name);
+        if (symbol && online_symbol(symbol)) {
+            const uintptr_t function=bbgpu_resolve(name);
+            if (function) return function;
+            printf("Online: %s unavailable; retaining its offline contract\n",symbol);
+        }
+    }
+    return RUNTIME_LOOKUP(exports,name);
+}

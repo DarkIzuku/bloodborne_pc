@@ -1,14 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_write_log.h"
+#include "bbport_free_check.h"
 
 #include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <ucontext.h>
-#include <unistd.h>
 #include <x86intrin.h>
+#include "bbport_platform.h"
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <ucontext.h>
+#endif
 
 namespace BbWriteLog {
 namespace {
@@ -56,7 +61,7 @@ void Note(std::uint64_t address, const void* data, std::uint64_t size, Source so
 }
 
 void Record(std::uint64_t address, const void* data, std::uint64_t size, Source source) {
-    static thread_local const std::uint32_t tid = static_cast<std::uint32_t>(gettid());
+    static thread_local const std::uint32_t tid = BbPlatform::CurrentThreadId();
     Entry e{address, size, 0, __rdtsc(), source, tid};
     std::memcpy(&e.first, data, size < 8 ? size : 8);
     Push(ring, head, e);
@@ -77,30 +82,60 @@ void Record(std::uint64_t address, const void* data, std::uint64_t size, Source 
         }
     }
 }
-} // namespace BbWriteLog
-
-extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
-    using namespace BbWriteLog;
+void DumpRange(std::uint64_t address, std::uint64_t size) {
     if (Mode() == 0) {
+        std::fprintf(stderr, "Write log: off (BB_WRITE_LOG=1 lists the writes into this range)\n");
         return;
     }
+    const char* sources[] = {"backing",      "WriteData",           "fence",
+                             "EOP (decoded)", "WriteData (decoded)", "EOS (decoded)", "DmaData"};
+    const std::uint64_t now = __rdtsc(), n = head.load();
+    int shown = 0;
+    for (std::uint64_t i = n; i-- > (n > Size ? n - Size : 0) && shown < 64;) {
+        const Entry& e = ring[i % Size];
+        if (e.address < address + size && address < e.address + e.size) {
+            std::fprintf(stderr,
+                         "Write log: into range %s %#llx +%llu first %#llx tid %u, %.3f s before\n",
+                         e.source < 7 ? sources[e.source] : "?", (unsigned long long)e.address,
+                         (unsigned long long)e.size, (unsigned long long)e.first, e.tid,
+                         double(now - e.tsc) / 3.0e9);
+            ++shown;
+        }
+    }
+    std::fprintf(stderr, "Write log: %d of %llu logged writes in %#llx +%llu\n", shown,
+                 (unsigned long long)n, (unsigned long long)address, (unsigned long long)size);
+}
+} // namespace BbWriteLog
+
+// Linux: a ucontext_t from the SIGSEGV handler; Windows: the vectored handler's EXCEPTION_POINTERS.
+extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
+    using namespace BbWriteLog;
+#ifdef _WIN32
+    const CONTEXT* c = static_cast<const EXCEPTION_POINTERS*>(ucontext)->ContextRecord;
+    const std::uint64_t regs[] = {c->Rax, c->Rbx, c->Rcx, c->Rdx, c->Rsi, c->Rdi, c->R14, c->R15};
+#else
     const auto* uc = static_cast<const ucontext_t*>(ucontext);
     const auto* g = uc->uc_mcontext.gregs;
     const std::uint64_t regs[] = {std::uint64_t(g[REG_RAX]), std::uint64_t(g[REG_RBX]),
                                   std::uint64_t(g[REG_RCX]), std::uint64_t(g[REG_RDX]),
                                   std::uint64_t(g[REG_RSI]), std::uint64_t(g[REG_RDI]),
                                   std::uint64_t(g[REG_R14]), std::uint64_t(g[REG_R15])};
+#endif
+    BbFreeCheck::DumpAtFault(regs[0], regs[6]);
+    if (Mode() == 0) {
+        return;
+    }
     const char* names[] = {"rax", "rbx", "rcx", "rdx", "rsi", "rdi", "r14", "r15"};
     for (int i = 0; i < 8; ++i) {
         std::fprintf(stderr, "Write log: %s=%#llx\n", names[i], (unsigned long long)regs[i]);
     }
     const char* sources[] = {"backing",      "WriteData",           "fence",
-                             "EOP (decoded)", "WriteData (decoded)", "EOS (decoded)"};
+                             "EOP (decoded)", "WriteData (decoded)", "EOS (decoded)", "DmaData"};
     const std::uint64_t now = __rdtsc();
     const auto print = [&](const Entry& e, const char* what) {
         std::fprintf(stderr,
                      "Write log: %s %s %#llx +%llu first %#llx tid %u, %.3f s before the fault\n",
-                     what, e.source < 6 ? sources[e.source] : "?", (unsigned long long)e.address,
+                     what, e.source < 7 ? sources[e.source] : "?", (unsigned long long)e.address,
                      (unsigned long long)e.size, (unsigned long long)e.first, e.tid,
                      double(now - e.tsc) / 3.0e9);
     };
@@ -140,11 +175,11 @@ extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
     int shown = 0;
     for (std::uint64_t i = n; i-- > (n > Size ? n - Size : 0) && shown < 64;) {
         const Entry& e = ring[i % Size];
-        bool near = false;
+        bool nearby = false;
         for (const auto r : regs) {
-            near |= r + 0x1000 > e.address && r < e.address + e.size + 0x1000;
+            nearby |= r + 0x1000 > e.address && r < e.address + e.size + 0x1000;
         }
-        if (near) {
+        if (nearby) {
             print(e, "near");
             ++shown;
         }

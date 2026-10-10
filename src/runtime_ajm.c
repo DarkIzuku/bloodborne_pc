@@ -8,7 +8,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 #include "third_party/LibAtrac9/C/src/libatrac9.h"
 
 #define ERR_INVALID_CONTEXT ((int32_t)0x80930002)
@@ -69,7 +68,7 @@ typedef struct {
 typedef struct { int used, registered[24]; Instance instances[MAX_INSTANCES+1]; } Context;
 typedef struct { int used, context, canceled; } Batch;
 
-static pthread_mutex_t lock=PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
+static HostRecursiveMutex lock=HOST_RECURSIVE_MUTEX_INIT;
 static Context *contexts[MAX_CONTEXTS+1];
 static Batch batches[MAX_BATCHES];
 static size_t jobs_run, frames_decoded, batches_run;
@@ -367,41 +366,41 @@ static void run_job(Context *ctx, uint32_t id, Job *job) {
 static Context *context(uint32_t id) { return id && id<=MAX_CONTEXTS ? contexts[id] : NULL; }
 static ABI int32_t ajm_initialize(int64_t reserved, uint32_t *out) {
     if (!out || reserved) return ERR_INVALID_PARAMETER;
-    pthread_mutex_lock(&lock);
+    host_recursive_lock(&lock);
     for (uint32_t i=1;i<=MAX_CONTEXTS;++i) if (!contexts[i]) {
         contexts[i]=calloc(1,sizeof(Context));
-        pthread_mutex_unlock(&lock);
+        host_recursive_unlock(&lock);
         if (!contexts[i]) return ERR_OUT_OF_RESOURCES;
         *out=i; puts("Runtime: Ajm context initialized (ATRAC9 via LibAtrac9)");
         return 0;
     }
-    pthread_mutex_unlock(&lock);
+    host_recursive_unlock(&lock);
     return ERR_OUT_OF_RESOURCES;
 }
 static ABI int32_t ajm_finalize(uint32_t id) {
-    pthread_mutex_lock(&lock);
+    host_recursive_lock(&lock);
     Context *c=context(id);
-    if (!c) { pthread_mutex_unlock(&lock); return ERR_INVALID_CONTEXT; }
+    if (!c) { host_recursive_unlock(&lock); return ERR_INVALID_CONTEXT; }
     for (int i=0;i<=MAX_INSTANCES;++i) if (c->instances[i].handle) Atrac9ReleaseHandle(c->instances[i].handle);
     free(c); contexts[id]=NULL;
-    pthread_mutex_unlock(&lock);
+    host_recursive_unlock(&lock);
     return 0;
 }
 static ABI int32_t ajm_module_register(uint32_t id, uint32_t codec, int64_t reserved) {
     if (reserved || codec>=24) return ERR_INVALID_PARAMETER;
-    pthread_mutex_lock(&lock);
+    host_recursive_lock(&lock);
     Context *c=context(id);
     int32_t r=!c ? ERR_INVALID_CONTEXT : c->registered[codec] ? ERR_ALREADY_REGISTERED : 0;
     if (!r) c->registered[codec]=1;
-    pthread_mutex_unlock(&lock);
+    host_recursive_unlock(&lock);
     return r;
 }
 static ABI int32_t ajm_module_unregister(uint32_t id, uint32_t codec) {
-    pthread_mutex_lock(&lock);
+    host_recursive_lock(&lock);
     Context *c=context(id);
     int32_t r=!c ? ERR_INVALID_CONTEXT : codec>=24 ? ERR_INVALID_PARAMETER : !c->registered[codec] ? ERR_NOT_REGISTERED : 0;
     if (!r) c->registered[codec]=0;
-    pthread_mutex_unlock(&lock);
+    host_recursive_unlock(&lock);
     return r;
 }
 static ABI int32_t ajm_instance_create(uint32_t id, uint32_t codec, uint64_t flags, uint32_t *out) {
@@ -409,7 +408,7 @@ static ABI int32_t ajm_instance_create(uint32_t id, uint32_t codec, uint64_t fla
     if (!(flags & 7)) return ERR_WRONG_REVISION;
     if (codec!=1) { fprintf(stderr,"STOP: Ajm codec %u (0=MP3, 2=AAC) is not implemented\n",codec); exit(21); }
     if (ajm_trace()) printf("Audio trace: Ajm instance create codec %u flags %#llx\n",codec,(unsigned long long)flags);
-    pthread_mutex_lock(&lock);
+    host_recursive_lock(&lock);
     Context *c=context(id);
     int32_t r=!c ? ERR_INVALID_CONTEXT : !c->registered[codec] ? ERR_NOT_REGISTERED : ERR_OUT_OF_RESOURCES;
     if (c && c->registered[codec]) for (uint32_t i=1;i<=MAX_INSTANCES;++i) if (!c->instances[i].used) {
@@ -420,16 +419,16 @@ static ABI int32_t ajm_instance_create(uint32_t id, uint32_t codec, uint64_t fla
         if (in->format>FORMAT_FLOAT) { in->used=0; r=ERR_INVALID_PARAMETER; break; }
         *out=i|(codec<<14); r=0; break;
     }
-    pthread_mutex_unlock(&lock);
+    host_recursive_unlock(&lock);
     return r;
 }
 static ABI int32_t ajm_instance_destroy(uint32_t id, uint32_t instance) {
-    pthread_mutex_lock(&lock);
+    host_recursive_lock(&lock);
     Context *c=context(id);
     Instance *in=c ? &c->instances[instance & MAX_INSTANCES] : NULL;
     int32_t r=!c ? ERR_INVALID_CONTEXT : !(instance & MAX_INSTANCES) || !in->used ? ERR_INVALID_INSTANCE : 0;
     if (!r) { if (in->handle) Atrac9ReleaseHandle(in->handle); memset(in,0,sizeof(*in)); }
-    pthread_mutex_unlock(&lock);
+    host_recursive_unlock(&lock);
     return r;
 }
 static ABI uint32_t ajm_instance_codec(uint32_t instance) { return (instance>>14)&0x1f; }
@@ -437,12 +436,12 @@ static ABI int32_t ajm_batch_start(uint32_t id, unsigned char *buffer, uint32_t 
                                    BatchError *error, uint32_t *out) {
     (void)priority;
     if (size & 7) return ERR_MALFORMED_BATCH;
-    pthread_mutex_lock(&lock);
+    host_recursive_lock(&lock);
     Context *c=context(id);
-    if (!c) { pthread_mutex_unlock(&lock); return ERR_INVALID_CONTEXT; }
+    if (!c) { host_recursive_unlock(&lock); return ERR_INVALID_CONTEXT; }
     int slot=-1;
     for (int i=0;i<MAX_BATCHES;++i) if (!batches[i].used) { slot=i; break; }
-    if (slot<0) { pthread_mutex_unlock(&lock); return ERR_OUT_OF_RESOURCES; }
+    if (slot<0) { host_recursive_unlock(&lock); return ERR_OUT_OF_RESOURCES; }
     for (unsigned char *p=buffer, *end=buffer+size; p<end;) {
         Chunk chunk; memcpy(&chunk,p,8);
         unsigned char *body=p+8;
@@ -451,7 +450,7 @@ static ABI int32_t ajm_batch_start(uint32_t id, unsigned char *buffer, uint32_t 
         Job job;
         if (ident(chunk.word)!=IDENT_JOB || p>end || parse_job(body,chunk.size,&job)) {
             if (error) { error->error_code=ERR_MALFORMED_BATCH; error->job_address=body-8; error->command_offset=(uint32_t)(body-8-buffer); error->job_return_address=NULL; }
-            pthread_mutex_unlock(&lock);
+            host_recursive_unlock(&lock);
             return ERR_MALFORMED_BATCH;
         }
         run_job(c,payload(chunk.word),&job);
@@ -459,21 +458,21 @@ static ABI int32_t ajm_batch_start(uint32_t id, unsigned char *buffer, uint32_t 
     batches[slot]=(Batch){1,(int)id,0};
     ++batches_run;
     *out=(uint32_t)slot+1;
-    pthread_mutex_unlock(&lock);
+    host_recursive_unlock(&lock);
     return 0;
 }
 static ABI int32_t ajm_batch_wait(uint32_t id, uint32_t batch, uint32_t timeout, BatchError *error) {
     (void)timeout; (void)error;
-    pthread_mutex_lock(&lock);
+    host_recursive_lock(&lock);
     int32_t r=!context(id) ? ERR_INVALID_CONTEXT : !batch || batch>MAX_BATCHES || !batches[batch-1].used ? ERR_INVALID_BATCH : 0;
     if (!r) { if (batches[batch-1].canceled) r=ERR_CANCELLED; batches[batch-1].used=0; }
-    pthread_mutex_unlock(&lock);
+    host_recursive_unlock(&lock);
     return r;
 }
 static ABI int32_t ajm_batch_cancel(uint32_t id, uint32_t batch) {
-    pthread_mutex_lock(&lock);
+    host_recursive_lock(&lock);
     int32_t r=!context(id) ? ERR_INVALID_CONTEXT : !batch || batch>MAX_BATCHES || !batches[batch-1].used ? ERR_INVALID_BATCH : 0;
-    pthread_mutex_unlock(&lock);
+    host_recursive_unlock(&lock);
     return r; /* already processed at submission: nothing to cancel */
 }
 static ABI int32_t ajm_error_dump(void) { return 0; }

@@ -6,8 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdatomic.h>
-#include <sched.h>
-#include <pthread.h>
 
 typedef struct {
     union { GuestCallback plain; void (ABI *with_arg)(void *); } callback;
@@ -25,7 +23,23 @@ static _Atomic size_t memory_calls;
 static struct { const void *data; uint64_t filesz, memsz; } tls_modules[TLS_MODULES];
 static _Thread_local unsigned char *tls_blocks[TLS_MODULES];
 static void *process_param;
-void runtime_set_procparam(void *param) { process_param=param; }
+void runtime_set_procparam(void *param) {
+    process_param=param;
+    /* bbport: the game's libc heap settings (SceProcParam +0x30: SceLibcParam; its +0x10.. pointers to
+     * the heap size, delayed and extended allocation flags, initial size). */
+    const uint64_t *p=(const uint64_t *)param;
+    if (!p || p[0]<0x38 || !p[6]) return;
+    const uint64_t *libc=(const uint64_t *)p[6];
+    printf("Runtime: libc param size %#llx, entries %u", (unsigned long long)libc[0], (unsigned)libc[1]);
+    static const char *names[]={"heap size","delayed alloc","extended alloc","initial size"};
+    for (int i=0;i<4 && (uint64_t)(2+i)*8<libc[0];++i) {
+        const void *field=(const void *)libc[2+i];
+        if (!field) { printf(", %s -",names[i]); continue; }
+        if (i==0 || i==3) printf(", %s %#llx",names[i],(unsigned long long)*(const uint64_t *)field);
+        else printf(", %s %u",names[i],*(const uint32_t *)field);
+    }
+    printf("\n");
+}
 static ABI void *guest_procparam(void) { return process_param; }
 static void **application_heap_api;
 static ABI void guest_set_heap_api(void **api) {
@@ -89,17 +103,17 @@ static ABI void init_env(void) {
     ++calls_init;
     puts("Runtime: _init_env returned (verified libc implementation: RET)");
 }
-static pthread_mutex_t handler_lock = PTHREAD_MUTEX_INITIALIZER;
+static HostMutex handler_lock = HOST_MUTEX_INIT;
 static int register_handler(ExitHandler value) {
-    pthread_mutex_lock(&handler_lock);
+    host_lock(&handler_lock);
     if (handler_count == handler_capacity) {
         size_t capacity = handler_capacity ? handler_capacity * 2 : 64;
         ExitHandler *next = capacity > 1024 * 1024 ? NULL : realloc(handlers, capacity * sizeof(*handlers));
-        if (!next) { pthread_mutex_unlock(&handler_lock); return -1; }
+        if (!next) { host_unlock(&handler_lock); return -1; }
         handlers = next; handler_capacity = capacity;
     }
     value.active = 1; handlers[handler_count++] = value;
-    pthread_mutex_unlock(&handler_lock);
+    host_unlock(&handler_lock);
     return 0;
 }
 static ABI int guest_atexit(GuestCallback callback) {
@@ -116,12 +130,12 @@ void runtime_finalize(void *dso) {
     /* Mark before invoking: repeated or recursive finalization cannot run twice.
        Restart at the end to include handlers registered by a destructor. */
     for (;;) {
-        pthread_mutex_lock(&handler_lock);
+        host_lock(&handler_lock);
         size_t i = handler_count;
         while (i && (!handlers[i-1].active || (dso && handlers[i-1].dso != dso))) --i;
-        if (!i) { pthread_mutex_unlock(&handler_lock); return; }
+        if (!i) { host_unlock(&handler_lock); return; }
         ExitHandler handler = handlers[i-1]; handlers[i-1].active = 0;
-        pthread_mutex_unlock(&handler_lock);
+        host_unlock(&handler_lock);
         if (handler.with_arg) handler.callback.with_arg(handler.argument);
         else handler.callback.plain();
     }
@@ -144,7 +158,7 @@ static ABI int guard_acquire(uint64_t *guard) {
             fputs("STOP: recursive/concurrent static initialization is not supported yet\n", stderr);
             exit(21);
         }
-        sched_yield(); /* another thread is running the initializer */
+        host_yield(); /* another thread is running the initializer */
     }
     atomic_fetch_add(&guards_acquired, 1);
     return 1;
@@ -161,13 +175,16 @@ static ABI __attribute__((noreturn)) void stack_fail(void) {
     exit(22);
 }
 static ABI void *guest_memset(void *dst, int value, size_t size) {
-    atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed); return memset(dst, value, size);
+    atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed);
+    memset(dst, value, size); runtime_memory_note_cpu_write((uintptr_t)dst, size); return dst;
 }
 static ABI void *guest_memcpy(void *dst, const void *src, size_t size) {
-    atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed); return memcpy(dst, src, size);
+    atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed);
+    memcpy(dst, src, size); runtime_memory_note_cpu_write((uintptr_t)dst, size); return dst;
 }
 static ABI void *guest_memmove(void *dst, const void *src, size_t size) {
-    atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed); return memmove(dst, src, size);
+    atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed);
+    memmove(dst, src, size); runtime_memory_note_cpu_write((uintptr_t)dst, size); return dst;
 }
 static ABI int guest_memcmp(const void *a, const void *b, size_t size) {
     atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed); return memcmp(a, b, size);

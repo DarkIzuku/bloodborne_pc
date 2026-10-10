@@ -103,3 +103,21 @@ class PackagedVulkanTests(unittest.TestCase):
         self.env["BB_NVIDIA_LIB_DIR"] = str(self.libs)
         vulkan.configure(self.env, (self.icds,), ())
         self.assertIn("nvidia_icd.json", self.env["VK_DRIVER_FILES"])
+
+    def drm_card(self, name, vendor):
+        device = self.root / "drm" / name / "device"
+        device.mkdir(parents=True)
+        (device / "vendor").write_text(vendor + "\n")
+
+    def test_new_memory_model_offered_with_an_amd_gpu(self):
+        self.drm_card("card0", "0x8086")
+        self.drm_card("card1", "0x1002")
+        self.assertIs(vulkan.amd_gpu(self.root / "drm"), True)
+
+    def test_new_memory_model_not_offered_without_an_amd_gpu(self):
+        self.drm_card("card0", "0x10de")
+        self.assertIs(vulkan.amd_gpu(self.root / "drm"), False)
+
+    def test_unknown_gpu_leaves_the_choice_to_the_game(self):
+        (self.root / "drm").mkdir()
+        self.assertIsNone(vulkan.amd_gpu(self.root / "drm"))

@@ -3,13 +3,24 @@
 
 #pragma once
 
-#include "common/assert.h"
 #include "common/types.h"
 
+#include <concepts>
 #include <cstddef>
+#include <cstring>
+#include <stdexcept>
+#include <string>
+#include <type_traits>
 #include <vector>
 
 namespace Serialization {
+
+/// bbport: a cache entry that cannot be used: shorter than what it claims to hold (a file cut
+/// short by a crash or a power loss, issue #28), or rejected by the driver while preloading. The
+/// pipeline cache drops the entry and compiles it again instead of stopping the game.
+struct CorruptData : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
 
 template <typename T>
 concept Container = requires(T t) {
@@ -42,9 +53,18 @@ struct Archive {
     }
 
     void Advance(size_t size) {
-        ASSERT_MSG(offset + size <= container.size(),
-                   "Invalid or corrupted deserialization container/shader cache");
+        Require(size);
         offset += size;
+    }
+
+    [[nodiscard]] size_t Remaining() const {
+        return container.size() - offset;
+    }
+
+    void Require(size_t size) const {
+        if (size > Remaining()) {
+            throw CorruptData("Truncated pipeline cache record");
+        }
     }
 
     std::vector<u8>&& TakeOff() {
@@ -57,10 +77,10 @@ struct Archive {
     }
 
     Archive() = default;
-    explicit Archive(std::vector<u8>&& v) : container{v} {}
+    explicit Archive(std::vector<u8>&& v) : container{std::move(v)} {}
 
 private:
-    u32 offset{};
+    size_t offset{};
     std::vector<u8> container{};
 
     friend struct Writer;
@@ -105,8 +125,7 @@ struct Writer {
 struct Reader {
     template <typename T>
     void Read(T* ptr, size_t size) {
-        ASSERT_MSG(ar.offset + size <= ar.container.size(),
-                   "Invalid or corrupted deserialization container/shader cache");
+        ar.Require(size);
         std::memcpy(reinterpret_cast<void*>(ptr), ar.CurrPtr(), size);
         ar.Advance(size);
     }
@@ -121,7 +140,13 @@ struct Reader {
     void Read(auto& v) {
         size_t num_elements{};
         Read(num_elements);
-        for (int i = 0; i < num_elements; ++i) {
+        // All containers in the pipeline format store fixed-size scalar/struct elements.
+        if (num_elements > ar.Remaining() / sizeof(typename std::decay_t<decltype(v)>::value_type) ||
+            num_elements > v.max_size()) {
+            throw CorruptData("Invalid pipeline cache element count");
+        }
+        v.clear();
+        for (size_t i = 0; i < num_elements; ++i) {
             v.emplace_back();
             Read(v.back());
         }
@@ -130,6 +155,7 @@ struct Reader {
     void Read(std::string& s) {
         size_t length{};
         Read(length);
+        ar.Require(length);
         s.resize(length);
         Read(s.data(), length);
     }

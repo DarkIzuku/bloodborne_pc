@@ -1,13 +1,20 @@
 #include "bbport_write_log.h"
+#include "bbport_gnm_hooks.h"
 // bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
 #include "bbport_copy.h"
+#ifndef _WIN32
 #include <sys/resource.h>
+#endif
+#include "bbport_free_check.h"
 #include "bbport_toggles.h"
+#include "engine/engine_hooks.h"
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
+#include <fstream>
+#include <iterator>
 #include <boost/asio/io_context.hpp>
 #include "common/polyfill_thread.h"
 #include "video_core/renderdoc.h"
@@ -24,6 +31,7 @@
 #include "common/rdtsc.h"
 #include "core/libraries/kernel/orbis_error.h"
 #include "core/libraries/libs.h"
+#include "core/emulator_settings.h"
 #include "core/memory.h"
 #include "core/signals.h"
 #include "sdl_window.h"
@@ -33,8 +41,10 @@ extern "C" {
 // runtime_memory.c
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
 int runtime_memory_write_backing(uintptr_t address, const void* data, uint64_t size);
+void runtime_memory_read_backing(uintptr_t address, void* data, uint64_t size);
 uint64_t runtime_memory_clamp(uintptr_t address, uint64_t size);
 int runtime_memory_region(uintptr_t address, uintptr_t* start, uintptr_t* end, int* mapped);
+const uint64_t* runtime_memory_generation(void);
 void runtime_memory_gpu_protect(uintptr_t address, uint64_t size, int read, int write);
 typedef void (*RuntimeGpuRange)(uintptr_t address, uint64_t size);
 // runtime_kernel.c: one clock for guest and GPU timestamps
@@ -43,6 +53,8 @@ uint64_t runtime_process_time_counter(void);
 uint64_t runtime_tsc_frequency(void);
 int32_t* runtime_errno(void);
 void runtime_memory_set_gpu_hooks(RuntimeGpuRange map, RuntimeGpuRange unmap, RuntimeGpuRange invalidate);
+void runtime_memory_set_note_write_hook(RuntimeGpuRange note);
+void runtime_memory_set_cpu_write_hook(RuntimeGpuRange hook);
 }
 
 Frontend::WindowSDL* g_window = nullptr;
@@ -79,6 +91,36 @@ public:
         info.title = config.title ? config.title : "";
         info.sdk_ver = config.sdk_version;
         info.psf_attributes.raw = config.psf_attributes;
+        // Online libraries read the game's NP communication id, rather than an
+        // emulator's profile. Use the same validated game directory as the launcher.
+        const char* app0 = std::getenv("BB_GAME_DIR");
+        if (app0 && *app0) {
+            info.game_folder = std::filesystem::u8path(app0);
+            info.app_ver = "01.09";
+            std::ifstream file(info.game_folder / "sce_sys/npbind.dat", std::ios::binary);
+            if (file) {
+                file.seekg(0, std::ios::end);
+                const auto length = file.tellg();
+                if (length >= 0x80 && length <= 1024 * 1024) {
+                    file.seekg(0);
+                    std::vector<u8> bytes(static_cast<size_t>(length));
+                    if (file.read(reinterpret_cast<char*>(bytes.data()), bytes.size())) {
+                        info.npCommIds.clear();
+                        for (size_t at = 0x80; at + 4 <= bytes.size();) {
+                            const u16 tag = u16(bytes[at] << 8 | bytes[at + 1]);
+                            const u16 size = u16(bytes[at + 2] << 8 | bytes[at + 3]);
+                            at += 4;
+                            if (size > bytes.size() - at) break;
+                            if (tag == 0x10 && size) {
+                                const auto end = std::find(bytes.begin() + at, bytes.begin() + at + size, 0);
+                                info.npCommIds.emplace_back(bytes.begin() + at, end);
+                            }
+                            at += size;
+                        }
+                    }
+                }
+            }
+        }
     }
 };
 
@@ -95,14 +137,69 @@ void MemoryManager::SetRasterizer(Vulkan::Rasterizer* rasterizer_) {
         [](uintptr_t address, uint64_t size) {
             Memory::Instance()->GetRasterizer()->InvalidateMemory(address, size);
         });
+    // bbport: data written into GPU memory by a path the GPU side hears of (file reads, the game's
+    // resource loaders): invalidated, and an asset (it may keep a VRAM copy).
+    runtime_memory_set_note_write_hook([](uintptr_t address, uint64_t size) {
+        Memory::Instance()->GetRasterizer()->NoteAssetWrite(address, size);
+    });
+    // bbport: the game's libc copies (memcpy, memset, memmove) over pages the caches watch.
+    runtime_memory_set_cpu_write_hook([](uintptr_t address, uint64_t size) {
+        Memory::Instance()->GetRasterizer()->OnCpuWrite(address, size);
+    });
 }
 void MemoryManager::InvalidateMemory(VAddr address, u64 size) {
     if (rasterizer) rasterizer->InvalidateMemory(address, size);
 }
+namespace {
+// bbport: the mapped region of the last lookup, per thread, valid for the mapping table generation
+// it was read at. The GPU command thread clamps and copies thousands of constant ranges a frame,
+// nearly all within the region of the one before: two calls into the runtime each (~5% of it).
+struct RegionCache {
+    u64 generation = 1; // odd: invalid
+    uintptr_t start = 0, end = 0;
+};
+thread_local RegionCache region_cache;
+
+bool CachedMapped(VAddr address, u64 size) {
+    static const uint64_t* const generation_ptr = runtime_memory_generation();
+    const u64 generation = __atomic_load_n(generation_ptr, __ATOMIC_ACQUIRE);
+    if (generation & 1) {
+        return false; // being changed
+    }
+    auto& cache = region_cache;
+    if (cache.generation == generation && address >= cache.start && address + size <= cache.end) {
+        return true;
+    }
+    uintptr_t start = 0, end = 0;
+    int mapped = 0;
+    if (!runtime_memory_region(address, &start, &end, &mapped) || !mapped) {
+        return false;
+    }
+    cache = {generation, start, end};
+    return address + size <= end;
+}
+} // namespace
+
 u64 MemoryManager::ClampRangeSize(VAddr virtual_addr, u64 size) {
+    if (size && CachedMapped(virtual_addr, size)) {
+        return size;
+    }
     return runtime_memory_clamp(virtual_addr, size);
 }
 static void CopySparseSerial(VAddr source, u8* dest, u64 size) {
+    // BB_READBACKS=2 protects GPU-written pages against reads: the copy threads and recorders
+    // read through the backing view, as a read fault on them would wait for the GPU thread,
+    // which waits for them.
+    static const bool precise =
+        EmulatorSettings.GetReadbacksMode() == GpuReadbacksMode::Precise;
+    if (precise) {
+        runtime_memory_read_backing(source, dest, size);
+        return;
+    }
+    if (size && CachedMapped(source, size)) {
+        std::memcpy(dest, reinterpret_cast<const void*>(source), size);
+        return;
+    }
     while (size) {
         uintptr_t start = 0, end = 0;
         int mapped = 0;
@@ -176,16 +273,6 @@ std::condition_variable g_window_cv;
 bool g_window_ready;
 } // namespace
 
-u32 BbDisplayRefreshHz() {
-    static const u32 hz = [] {
-        const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetPrimaryDisplay());
-        const u32 rate = mode && mode->refresh_rate > 0 ? u32(mode->refresh_rate + 0.5f) : 60;
-        std::printf("GPU: vblank follows the display refresh rate, %u Hz\n", rate);
-        return std::max<u32>(rate, 60);
-    }();
-    return hz;
-}
-
 #ifdef BB_PGO_GENERATE
 extern "C" void __gcov_dump(void);
 extern "C" void __gcov_reset(void);
@@ -211,7 +298,11 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
     StartProfileWriter();
 #endif
     g_sdk_version = config->sdk_version;
+#ifdef _WIN32
+    if (config->user_dir && !std::getenv("BB_GPU_USER_DIR")) _putenv_s("BB_GPU_USER_DIR", config->user_dir);
+#else
     if (config->user_dir) setenv("BB_GPU_USER_DIR", config->user_dir, 0);
+#endif
     Core::Emulator::FillElfInfo(*config);
     const std::string title = config->title ? config->title : "Bloodborne";
     const s32 width = config->width, height = config->height;
@@ -228,6 +319,9 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
             SDL_Delay(2);
         }
         LOG_INFO(Frontend, "Window closed by user");
+        // _Exit skips renderer destructors. Snapshot completed pipeline work and drain its
+        // asynchronous cache writes before terminating; no gameplay queue waits are added.
+        Vulkan::PipelineCache::SaveAllForShutdown();
         std::fflush(stdout);
         std::_Exit(0);
     });
@@ -244,11 +338,19 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
 }
 
 namespace Libraries::Kernel { void StartKernelService(); }
+extern "C" void bbnet_register(void);
+extern "C" void bbnet_initialize(void);
+extern "C" void bbgpu_start_online(void) {
+    const char* online = std::getenv("BB_ONLINE");
+    if (online && online[0] == '1') bbnet_initialize();
+}
 extern "C" void bbgpu_register_kernel(void) {
     Libraries::Kernel::StartKernelService();
     Core::Loader::SymbolsResolver resolver;
     Libraries::Kernel::RegisterEventQueue(&resolver);
     Libraries::AvPlayer::RegisterLib(&resolver);
+    const char* online = std::getenv("BB_ONLINE");
+    if (online && online[0] == '1') bbnet_register();
 }
 
 extern "C" uintptr_t bbgpu_resolve(const char* scoped_nid) {
@@ -263,7 +365,21 @@ extern "C" uintptr_t bbgpu_resolve(const char* scoped_nid) {
 }
 
 extern "C" int bbgpu_handle_fault(void* ucontext, void* address) {
-    return Core::Signals::Instance()->DispatchAccessViolation(ucontext, address) ? 1 : 0;
+    // BB_LABEL_TRAP (diagnostic): its read-only label pages first. Not passed on to GPU page
+    // tracking (a write fault drains the draw pipe: thousands a second would change the timing
+    // under test); label pages are not expected to be GPU-tracked.
+    if (BbFreeCheck::OnTrapFault(ucontext, reinterpret_cast<std::uint64_t>(address))) {
+        return 1;
+    }
+    if (Core::Signals::Instance()->DispatchAccessViolation(ucontext, address)) {
+        return 1;
+    }
+    return BbFreeCheck::OnStaleTrapFault(reinterpret_cast<std::uint64_t>(address)) ? 1 : 0;
+}
+
+extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
+    BbGnmHooks::PatchImage(image, size);
+    BbEngine::Install(image, size);
 }
 
 extern "C" unsigned bbgpu_symbol_count(void) {

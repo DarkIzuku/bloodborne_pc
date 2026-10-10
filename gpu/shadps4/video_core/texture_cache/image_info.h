@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <string_view>
+
 #include "common/types.h"
 #include "video_core/amdgpu/cb_db_extent.h"
 #include "video_core/amdgpu/tiling.h"
@@ -56,6 +58,10 @@ struct ImageInfo {
     s32 SliceOf(const ImageInfo& info, s32 mip) const;
 
     bool IsCompatible(const ImageInfo& info) const;
+    // Geometry/storage coverage only; depth/color view compatibility is binding-dependent.
+    std::string_view ViewRejection(const ImageInfo& candidate, SubresourceBase base = {}) const;
+    bool PaddingOnlyDifference(const ImageInfo& other) const;
+    std::array<u32, 6> LayoutKey() const;
     void UpdateSize();
 
     struct {
@@ -67,7 +73,7 @@ struct ImageInfo {
 
     ImageProperties props{};
     vk::Format pixel_format = vk::Format::eUndefined;
-    AmdGpu::ImageType type;
+    AmdGpu::ImageType type{};
     SubresourceExtent resources;
     Extent3D size{1, 1, 1};
     u32 num_bits{};
@@ -81,7 +87,7 @@ struct ImageInfo {
         u32 height;
         u32 offset;
     };
-    std::array<MipInfo, 16> mips_layout;
+    std::array<MipInfo, 16> mips_layout{};
     VAddr guest_address{};
     u32 guest_size{};
     u8 bank_swizzle{};

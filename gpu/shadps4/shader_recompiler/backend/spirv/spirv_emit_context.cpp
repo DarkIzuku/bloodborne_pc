@@ -179,6 +179,9 @@ void EmitContext::DefineArithmeticTypes() {
 
 void EmitContext::DefineInterfaces() {
     DefinePushDataBlock();
+    if (VertexMotion()) {
+        DefineMotionAddressBlock();
+    }
     DefineInputs();
     DefineOutputs();
 }
@@ -770,6 +773,18 @@ void EmitContext::DefineOutputs() {
     default:
         UNREACHABLE();
     }
+}
+
+void EmitContext::DefineMotionAddressBlock() {
+    const Id type = TypeStruct(U64, U64);
+    Decorate(type, spv::Decoration::Block);
+    MemberDecorate(type, 0, spv::Decoration::Offset, 0U);
+    MemberDecorate(type, 1, spv::Decoration::Offset, 8U);
+    motion_addresses = DefineVar(type, spv::StorageClass::Uniform);
+    Decorate(motion_addresses, spv::Decoration::DescriptorSet, MotionVectors::DescriptorSet);
+    Decorate(motion_addresses, spv::Decoration::Binding, MotionVectors::AddressBinding);
+    Name(motion_addresses, "motion_addresses");
+    interfaces.push_back(motion_addresses);
 }
 
 void EmitContext::DefinePushDataBlock() {

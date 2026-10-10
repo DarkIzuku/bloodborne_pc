@@ -11,8 +11,6 @@
 #include "common/path_util.h"
 
 #ifdef _WIN32
-#include "common/ntapi.h"
-
 #include <io.h>
 #include <share.h>
 #include <windows.h>
@@ -237,15 +235,12 @@ void IOFile::Unlink() {
     // Mark the file for deletion
     // TODO: Also remove the file path?
 #ifdef _WIN64
-    FILE_DISPOSITION_INFORMATION disposition;
-    IO_STATUS_BLOCK iosb;
-
+    // bbport: Win32 delete-on-close instead of ntdll's NtSetInformationFile (common/ntapi.cpp
+    // is not built).
     const int fd = fileno(file);
     HANDLE hfile = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
-
-    disposition.DeleteFile = TRUE;
-    NtSetInformationFile(hfile, &iosb, &disposition, sizeof(disposition),
-                         FileDispositionInformation);
+    FILE_DISPOSITION_INFO disposition{.DeleteFile = TRUE};
+    SetFileInformationByHandle(hfile, FileDispositionInfo, &disposition, sizeof(disposition));
 #else
     if (unlink(file_path.c_str()) != 0) {
         const auto ec = std::error_code{errno, std::generic_category()};

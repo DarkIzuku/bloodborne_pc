@@ -6,13 +6,20 @@
 #pragma once
 
 #include <algorithm>
+#include <thread>
+#ifndef _WIN32
 #include <sched.h>
 #include <sys/resource.h>
-#include <thread>
 #include <unistd.h>
+#endif
 
 namespace BbThreads {
 
+#ifdef _WIN32
+// Windows (bbport_platform.cpp): the process affinity mask; THREAD_PRIORITY_IDLE.
+unsigned Available();
+void MakeBackground();
+#else
 /// Hardware threads available to the process.
 inline unsigned Available() {
     cpu_set_t set;
@@ -30,5 +37,6 @@ inline void MakeBackground() {
         setpriority(PRIO_PROCESS, static_cast<id_t>(gettid()), 19);
     }
 }
+#endif
 
 } // namespace BbThreads

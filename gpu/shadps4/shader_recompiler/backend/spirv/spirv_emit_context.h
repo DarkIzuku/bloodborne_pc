@@ -254,13 +254,14 @@ public:
     Id push_data_block{};
     // bbport: object motion vectors (runtime_info.h, MotionVectors).
     Id motion_out_cur{};
+    Id motion_addresses{};
     Id motion_out_prev{};
     Id motion_in_cur{};
     Id motion_in_prev{};
     Id motion_frag_out{};
     [[nodiscard]] bool VertexMotion() const {
         return sw_stage == SwStage::Vertex && hw_stage == HwStage::Vertex &&
-               runtime_info.hw.vs.motion_vectors && MotionVectors::positions_address != 0;
+               runtime_info.hw.vs.motion_vectors;
     }
     [[nodiscard]] bool FragmentMotion() const {
         return sw_stage == SwStage::Fragment && runtime_info.hw.fs.motion_vectors;
@@ -412,6 +413,7 @@ private:
     void DefineVertexBlock();
     void DefineOutputs();
     void DefinePushDataBlock();
+    void DefineMotionAddressBlock();
     void DefineBuffers();
     void DefineImagesAndSamplers();
     void DefineSharedMemory();

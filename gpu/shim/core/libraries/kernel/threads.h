@@ -2,6 +2,7 @@
 // Each thread gets a guest TCB (GS base, TLS) from the C runtime before running.
 #pragma once
 #include <functional>
+#include <mutex>
 #include <stop_token>
 #include <thread>
 #include "common/types.h"
@@ -14,26 +15,39 @@ public:
     Thread() = default;
     ~Thread() { Stop(); }
     void Run(std::function<void(std::stop_token)>&& func) {
+        Stop();
+        std::scoped_lock lock{mutex};
         thread = std::jthread([func = std::move(func)](std::stop_token stop) {
             runtime_thread_attach_host("bb:hle");
             func(stop);
         });
     }
-    // A thread may stop its own Thread object (AvPlayer does); it detaches instead of joining.
-    void Join() {
-        if (!thread.joinable()) return;
-        if (thread.get_id() == std::this_thread::get_id()) thread.detach();
-        else thread.join();
+    // AvPlayer threads stop their own Thread objects while the owner may be stopping them too
+    // (AvPlayerSource::Stop). The jthread is taken out under the lock, so exactly one caller
+    // ends it: the thread itself detaches, anyone else joins.
+    void Join() { Finish(Take()); }
+    bool Joinable() const {
+        std::scoped_lock lock{mutex};
+        return thread.joinable();
     }
-    bool Joinable() const { return thread.joinable(); }
     void Stop() {
-        if (thread.joinable()) {
-            thread.request_stop();
-            Join();
-        }
+        std::jthread taken = Take();
+        if (taken.joinable()) taken.request_stop();
+        Finish(std::move(taken));
     }
 
 private:
+    std::jthread Take() {
+        std::scoped_lock lock{mutex};
+        return std::move(thread);
+    }
+    static void Finish(std::jthread taken) {
+        if (!taken.joinable()) return;
+        if (taken.get_id() == std::this_thread::get_id()) taken.detach();
+        else taken.join();
+    }
+
+    mutable std::mutex mutex;
     std::jthread thread;
 };
 } // namespace Libraries::Kernel

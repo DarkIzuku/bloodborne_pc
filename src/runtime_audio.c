@@ -11,7 +11,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <pthread.h>
 #include <time.h>
 #include <SDL3/SDL.h>
 
@@ -36,7 +35,7 @@ typedef struct {
     uint64_t next_deadline_ns; /* next return of sceAudioOutOutput */
     int64_t adjust_ns; int window_min, window_count; /* queue level control */
     uint64_t last_output_us;
-    pthread_mutex_t lock;
+    HostMutex lock;
     FILE *dump;                     /* BB_AUDIO_DUMP: raw converted PCM per port */
     int stats;
     uint64_t stat_start_ns, stat_last_ns, stat_max_gap_ns; /* BB_AUDIO_STATS */
@@ -45,16 +44,13 @@ typedef struct {
 typedef struct { uint16_t output; uint8_t channel, reserved; int16_t volume; uint16_t reroute; uint64_t flag, reserved64[2]; } PortState;
 _Static_assert(sizeof(PortState)==32,"AudioOut port state layout");
 
-static pthread_mutex_t table_lock=PTHREAD_MUTEX_INITIALIZER;
+static HostMutex table_lock=HOST_MUTEX_INIT;
 static Port ports[PORTS];
 static int initialized, sdl_ready=-1;
 static size_t buffers_out, ports_opened;
 
-static uint64_t now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC,&t); return (uint64_t)t.tv_sec*1000000000u+(uint64_t)t.tv_nsec; }
-static void sleep_until(uint64_t deadline) {
-    struct timespec t={(time_t)(deadline/1000000000u),(long)(deadline%1000000000u)};
-    while (clock_nanosleep(CLOCK_MONOTONIC,TIMER_ABSTIME,&t,NULL)) {}
-}
+static uint64_t now_ns(void) { return host_monotonic_ns(); }
+static void sleep_until(uint64_t deadline) { host_sleep_until_ns(deadline); }
 static int sdl_audio(void) {
     if (sdl_ready<0) {
         const char *mode=getenv("BB_AUDIO");
@@ -83,10 +79,10 @@ static Port *port_of(int32_t handle, int32_t *error) {
 }
 
 static ABI int32_t audio_init(void) {
-    pthread_mutex_lock(&table_lock);
+    host_lock(&table_lock);
     int32_t r=initialized ? ERR_ALREADY_INIT : 0;
     initialized=1;
-    pthread_mutex_unlock(&table_lock);
+    host_unlock(&table_lock);
     return r;
 }
 static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_t length, uint32_t freq, uint32_t param) {
@@ -99,13 +95,13 @@ static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_
     int first, last;
     if (!port_range(type,&first,&last)) return ERR_INVALID_TYPE;
     static const int channels[8]={1,2,8,1,2,8,8,8};
-    pthread_mutex_lock(&table_lock);
+    host_lock(&table_lock);
     int id=-1;
     for (int i=first;i<=last;++i) if (!ports[i].used) { id=i; break; }
-    if (id<0) { pthread_mutex_unlock(&table_lock); return ERR_PORT_FULL; }
+    if (id<0) { host_unlock(&table_lock); return ERR_PORT_FULL; }
     Port *p=&ports[id];
     memset(p,0,sizeof(*p));
-    pthread_mutex_init(&p->lock,NULL);
+    host_mutex_init(&p->lock);
     p->used=1; p->type=type; p->channels=channels[format]; p->is_float=format>=3 && format!=6;
     p->sample_bytes=p->is_float ? 4 : 2; p->frames=(int)length; p->std_layout=format>=6;
     for (int c=0;c<8;++c) p->volume[c]=VOLUME_0DB;
@@ -123,33 +119,33 @@ static ABI int32_t audio_open(int32_t user, int32_t type, int32_t index, uint32_
         p->dump=fopen(path,"wb");
     }
     ++ports_opened;
-    pthread_mutex_unlock(&table_lock);
+    host_unlock(&table_lock);
     printf("Runtime: audio port %d opened (type %d, %d ch, %s, %u frames)\n",id,type,p->channels,p->is_float ? "float" : "s16",length);
     return (type<<16) | id | 0x20000000;
 }
 static ABI int32_t audio_close(int32_t handle) {
-    pthread_mutex_lock(&table_lock);
+    host_lock(&table_lock);
     int32_t error=0;
     Port *p=port_of(handle,&error);
     if (p) {
-        pthread_mutex_lock(&p->lock);
+        host_lock(&p->lock);
         if (p->stream) SDL_DestroyAudioStream(p->stream);
         if (p->dump) fclose(p->dump);
         p->dump=NULL;
         p->stream=NULL; p->used=0;
-        pthread_mutex_unlock(&p->lock);
+        host_unlock(&p->lock);
     }
-    pthread_mutex_unlock(&table_lock);
+    host_unlock(&table_lock);
     return p ? 0 : error;
 }
 /* `pace`: wait for this port's next period. sceAudioOutOutputs waits once for all its ports. */
 static int32_t output_port(int32_t handle, const void *data, int pace) {
     int32_t error=0;
-    pthread_mutex_lock(&table_lock);
+    host_lock(&table_lock);
     Port *p=port_of(handle,&error);
-    pthread_mutex_unlock(&table_lock);
+    host_unlock(&table_lock);
     if (!p) return error;
-    pthread_mutex_lock(&p->lock);
+    host_lock(&p->lock);
     size_t samples=(size_t)p->frames*(size_t)p->channels, bytes=samples*(size_t)p->sample_bytes;
     uint64_t period=(uint64_t)p->frames*1000000000u/48000u;
     if (data) {
@@ -207,7 +203,7 @@ static int32_t output_port(int32_t handle, const void *data, int pace) {
         ++buffers_out;
     }
     p->last_output_us=now_ns()/1000;
-    pthread_mutex_unlock(&p->lock);
+    host_unlock(&p->lock);
     return data ? (int32_t)samples : 0;
 }
 static ABI int32_t audio_output(int32_t handle, const void *data) { return output_port(handle,data,1); }
@@ -223,24 +219,24 @@ static ABI int32_t audio_outputs(const OutputParam *params, uint32_t count) {
 }
 static ABI int32_t audio_volume(int32_t handle, int32_t flags, const int32_t *volume) {
     int32_t error=0;
-    pthread_mutex_lock(&table_lock);
+    host_lock(&table_lock);
     Port *p=port_of(handle,&error);
-    pthread_mutex_unlock(&table_lock);
+    host_unlock(&table_lock);
     if (!p) return error;
     if (!volume) return ERR_INVALID_POINTER;
-    pthread_mutex_lock(&p->lock);
+    host_lock(&p->lock);
     for (int c=0;c<8;++c) if (flags & (1<<c)) {
-        if (volume[c]<0 || volume[c]>VOLUME_0DB) { pthread_mutex_unlock(&p->lock); return ERR_INVALID_VOLUME; }
+        if (volume[c]<0 || volume[c]>VOLUME_0DB) { host_unlock(&p->lock); return ERR_INVALID_VOLUME; }
         p->volume[c]=volume[c];
     }
-    pthread_mutex_unlock(&p->lock);
+    host_unlock(&p->lock);
     return 0;
 }
 static ABI int32_t audio_state(int32_t handle, PortState *state) {
     int32_t error=0;
-    pthread_mutex_lock(&table_lock);
+    host_lock(&table_lock);
     Port *p=port_of(handle,&error);
-    pthread_mutex_unlock(&table_lock);
+    host_unlock(&table_lock);
     if (!p) return error;
     if (!state) return ERR_INVALID_POINTER;
     memset(state,0,sizeof(*state));
@@ -253,9 +249,9 @@ static ABI int32_t audio_state(int32_t handle, PortState *state) {
 }
 static ABI int32_t audio_last_time(int32_t handle, uint64_t *time) {
     int32_t error=0;
-    pthread_mutex_lock(&table_lock);
+    host_lock(&table_lock);
     Port *p=port_of(handle,&error);
-    pthread_mutex_unlock(&table_lock);
+    host_unlock(&table_lock);
     if (!p) return error;
     if (!time) return ERR_INVALID_POINTER;
     *time=p->last_output_us; return 0;

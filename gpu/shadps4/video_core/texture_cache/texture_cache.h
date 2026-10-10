@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <string>
 #include <atomic>
 #include <chrono>
 #include "bbport_toggles.h"
@@ -89,6 +90,9 @@ public:
                  PageManager& tracker);
     ~TextureCache();
 
+    /// bbport (diagnostics): the images over [addr, addr + size), described briefly.
+    std::string DescribeImagesIn(VAddr addr, u64 size);
+
     /// bbport: changes whenever an image is registered or unregistered.
     [[nodiscard]] u64 RegistryGeneration() const noexcept {
         return registry_generation.load(std::memory_order_acquire);
@@ -115,6 +119,10 @@ public:
 
     /// Schedules a copy of pending images for download back to CPU memory.
     void ProcessDownloadImages();
+
+    /// bbport debugging: writes mip 0 / layer 0 of every image registered at `address` to
+    /// <dir>/img_<address>_<n>_<w>x<h>_<format>.raw and prints what was found.
+    void DumpImagesAt(VAddr address, const char* dir);
 
     /// Retrieves the image handle of the image with the provided attributes.
     [[nodiscard]] ImageId FindImage(ImageDesc& desc, bool exact_fmt = false);
@@ -144,8 +152,13 @@ public:
     /// bbport: whether UpdateImage has nothing to do for this image (its fast path).
     [[nodiscard]] bool IsUpToDate(ImageId image_id) const {
         const Image& image = slot_images[image_id];
+#ifdef _LIBCPP_VERSION
+        // libc++ has no std::atomic_ref<const T> yet.
+        const u32 flags = __atomic_load_n(reinterpret_cast<const u32*>(&image.flags), __ATOMIC_ACQUIRE);
+#else
         const u32 flags = std::atomic_ref<const u32>(reinterpret_cast<const u32&>(image.flags))
                               .load(std::memory_order_acquire);
+#endif
         constexpr u32 Dirty = static_cast<u32>(ImageFlagBits::Dirty);
         constexpr u32 Registered = static_cast<u32>(ImageFlagBits::Registered);
         return (flags & (Dirty | Registered)) == Registered &&
@@ -161,8 +174,13 @@ public:
         // racing with this check races the same way with the locked path.
         if (!BbToggle::Disabled(BbToggle::UpdateImageFastPath)) {
             const Image& image = slot_images[image_id];
+#ifdef _LIBCPP_VERSION
+            const u32 flags =
+                __atomic_load_n(reinterpret_cast<const u32*>(&image.flags), __ATOMIC_ACQUIRE);
+#else
             const u32 flags = std::atomic_ref<const u32>(reinterpret_cast<const u32&>(image.flags))
                                   .load(std::memory_order_acquire);
+#endif
             constexpr u32 Dirty = static_cast<u32>(ImageFlagBits::Dirty);
             constexpr u32 Registered = static_cast<u32>(ImageFlagBits::Registered);
             if ((flags & (Dirty | Registered)) == Registered &&
@@ -182,11 +200,12 @@ public:
     [[nodiscard]] std::tuple<ImageId, int, int> ResolveOverlap(const ImageInfo& info,
                                                                BindingType binding,
                                                                ImageId cache_img_id,
-                                                               ImageId merged_image_id);
+                                                               ImageId merged_image_id,
+                                                               bool exact_fmt = false);
 
     /// Resolves depth overlap and either re-creates the image or returns existing one
     [[nodiscard]] ImageId ResolveDepthOverlap(const ImageInfo& requested_info, BindingType binding,
-                                              ImageId cache_img_id);
+                                              ImageId cache_img_id, bool exact_fmt);
 
     /// Creates a new image with provided image info and copies subresources from image_id
     [[nodiscard]] ImageId ExpandImage(const ImageInfo& info, ImageId image_id);
@@ -369,6 +388,7 @@ private:
     void UntrackImageTail(ImageId image_id);
 
     void MarkAsMaybeDirty(ImageId image_id, Image& image);
+    static u64 MaybeDirtyHash(const Image& image);
 
     /// Removes the image and any views/surface metas that reference it.
     void DeleteImage(ImageId image_id);
@@ -401,6 +421,9 @@ private:
     u64 total_used_memory = 0;
     u64 gc_evictions = 0, gc_downloads = 0; ///< bbport: pressure report
     std::chrono::steady_clock::time_point gc_report_time{};
+    /// bbport: gc_tick at each of the last 64 seconds (GarbageCollectImages).
+    std::array<u64, 64> gc_tick_at_second{};
+    u64 gc_second = 0;
     u64 trigger_gc_memory = 0;
     u64 pressure_gc_memory = 0;
     u64 critical_gc_memory = 0;
@@ -425,6 +448,7 @@ private:
         BindingType binding{};
         u32 levels = 0;
         u32 layers = 0;
+        std::array<u32, 6> layout_key{};
         u64 generation = ~0ULL;
         ImageId image_id{};
         int view_mip = -1;
@@ -434,6 +458,7 @@ private:
     std::atomic<u64> registry_generation{0};
     std::mutex samplers_mutex;
     std::mutex download_images_mutex;
+    std::atomic<bool> downloads_queued{false}; ///< download_images may be non-empty (checked without the lock)
     struct MetaDataInfo {
         MetaType type;
         s32 clear_mask = -1;
