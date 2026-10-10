@@ -145,6 +145,9 @@ def main():
         prebuilt = os.environ.get('BB_PREBUILT') == '1'
         if not prebuilt:
             build()
+        # MSYS2's DLLs (libc++, SDL3, FFmpeg, ...) for bb-probe and the engine asset tool run
+        # below. System32 is searched before PATH, so the Vulkan loader stays the driver's one.
+        os.environ['PATH'] = os.pathsep.join([str(msys_root() / 'clang64/bin'), os.environ.get('PATH', '')])
         # Engine features are prepared locally and only mounted after runtime byte checks.
         for key in ('BB_DREAM_MIRROR_ASSET', 'BB_ENGINE_IMAGE_SHA256', 'BB_PC_MENU_ASSETS', 'BB_REBIRTH_ASSET'):
             os.environ.pop(key, None)
@@ -205,9 +208,6 @@ def main():
                    '--patches', out / 'patches.bin', '--app0', merged,
                    '--user', os.environ.get('BB_USER_DIR', data / 'user'),
                    '--timeout', os.environ.get('BB_TIMEOUT', '0'), *arguments]
-        # MSYS2's DLLs (libc++, SDL3, FFmpeg, ...). System32 is searched before PATH, so the
-        # Vulkan loader stays the one installed with the GPU driver.
-        os.environ['PATH'] = os.pathsep.join([str(msys_root() / 'clang64/bin'), os.environ.get('PATH', '')])
         print('Starting:', ' '.join(shlex.quote(str(c)) for c in command), flush=True)
         try:
             status = subprocess.call(
