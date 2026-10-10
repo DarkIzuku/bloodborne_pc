@@ -67,6 +67,9 @@ int bbgpu_camera_look(float yaw, float pitch);
 int bbgpu_free_camera(void);
 /* The game's current camera state (its projection parameters at +0x50), 0 until known. */
 uint64_t bbgpu_camera_state(void);
+/* Shows the trophy banner over the game for a few seconds, with its chime
+ * (UTF-8 name; grade 1 bronze, 2 silver, 3 gold, 4 platinum). */
+void bbgpu_trophy_popup(const char *name_utf8, int grade);
 /* Patches the loaded image before the game runs (image still writable): libGnm entry hooks. */
 void bbgpu_patch_image(unsigned char *image, uint64_t size);
 /* Number of symbols registered by the vendored libraries (diagnostics). */
