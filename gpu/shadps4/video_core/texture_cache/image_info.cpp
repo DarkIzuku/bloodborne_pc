@@ -150,6 +150,85 @@ bool ImageInfo::IsCompatible(const ImageInfo& info) const {
            num_samples == info.num_samples && num_bits == info.num_bits;
 }
 
+std::array<u32, 6> ImageInfo::LayoutKey() const {
+    return {pitch, num_bits, num_samples, u32(tile_mode), u32(array_mode),
+            props.is_volume | props.is_tiled << 1 | props.is_pow2 << 2 | props.is_block << 3 |
+                props.is_depth << 4 | props.has_stencil << 5 | u32(bank_swizzle) << 8 |
+                u32(alt_tile) << 16};
+}
+
+bool ImageInfo::PaddingOnlyDifference(const ImageInfo& other) const {
+    return props.is_pow2 != other.props.is_pow2 && tile_mode == other.tile_mode &&
+           size == other.size && pitch == other.pitch && resources.levels == 1 &&
+           other.resources.levels == 1 && resources.layers == 1 && other.resources.layers == 1;
+}
+
+std::string_view ImageInfo::ViewRejection(const ImageInfo& candidate, SubresourceBase base) const {
+    if (!resources.levels || base.level >= candidate.resources.levels ||
+        resources.levels > candidate.resources.levels - base.level) {
+        return "insufficient mip levels at view base";
+    }
+    if (!resources.layers || base.layer >= candidate.resources.layers ||
+        resources.layers > candidate.resources.layers - base.layer) {
+        return "insufficient array layers at view base";
+    }
+    if (type != candidate.type) {
+        return "different image type";
+    }
+    if (num_samples != candidate.num_samples || num_bits != candidate.num_bits) {
+        return "different samples or block size";
+    }
+    // Attachment descriptions do not carry the shader descriptor's bank-swizzle field.
+    // Coverage is established by the guest mip/slice offsets below, not an unknown zero.
+    if (array_mode != candidate.array_mode || tile_mode != candidate.tile_mode ||
+        alt_tile != candidate.alt_tile) {
+        return "different guest tiling layout";
+    }
+    const u32 block_shift = props.is_block ? 2 : 0;
+    const u32 candidate_shift = candidate.props.is_block ? 2 : 0;
+    if (base.level >= candidate.mips_layout.size() ||
+        std::max(size.width >> block_shift, 1u) >
+            std::max(candidate.size.width >> (base.level + candidate_shift), 1u) ||
+        std::max(size.height >> block_shift, 1u) >
+            std::max(candidate.size.height >> (base.level + candidate_shift), 1u) ||
+        size.depth > std::max(candidate.size.depth >> base.level, 1u)) {
+        return "insufficient dimensions at view mip";
+    }
+    if ((mips_layout[0].pitch >> block_shift) !=
+        (candidate.mips_layout[base.level].pitch >> candidate_shift)) {
+        return "different mip pitch";
+    }
+    if (guest_address < candidate.guest_address ||
+        guest_address - candidate.guest_address > candidate.guest_size) {
+        return "guest address outside candidate";
+    }
+    const auto offset = guest_address - candidate.guest_address;
+    if (guest_size > candidate.guest_size - offset &&
+        !(offset == 0 && PaddingOnlyDifference(candidate))) {
+        return "guest range exceeds candidate";
+    }
+    if (resources.levels > mips_layout.size() ||
+        resources.levels > candidate.mips_layout.size() - base.level) {
+        return "invalid mip layout count";
+    }
+    for (u32 level = 0; level < resources.levels; ++level) {
+        const auto& requested_mip = mips_layout[level];
+        const auto& parent_mip = candidate.mips_layout[base.level + level];
+        const u64 parent_slice = parent_mip.size / candidate.resources.layers;
+        if (offset + requested_mip.offset != parent_mip.offset + base.layer * parent_slice) {
+            return "different guest mip/slice offsets";
+        }
+        if (resources.layers > 1 && requested_mip.size / resources.layers != parent_slice) {
+            return "different guest array stride";
+        }
+        if (requested_mip.size > parent_slice * resources.layers &&
+            !(offset == 0 && PaddingOnlyDifference(candidate))) {
+            return "guest mip exceeds selected slices";
+        }
+    }
+    return {};
+}
+
 void ImageInfo::UpdateSize() {
     guest_size = 0;
     for (s32 mip = 0; mip < resources.levels; ++mip) {
@@ -205,7 +284,8 @@ s32 ImageInfo::MipOf(const ImageInfo& info) const {
         return -1;
     }
 
-    if (info.array_mode != array_mode) {
+    if (info.array_mode != array_mode || !info.resources.layers ||
+        info.resources.levels > info.mips_layout.size()) {
         return -1;
     }
 
@@ -224,9 +304,9 @@ s32 ImageInfo::MipOf(const ImageInfo& info) const {
         const VAddr mip_base = info.guest_address + mip_ofs;
         const VAddr mip_end = mip_base + mip_size;
         const u32 slice_size = mip_size / info.resources.layers;
-        if (guest_address >= mip_base && guest_address < mip_end &&
+        if (slice_size && guest_address >= mip_base && guest_address < mip_end &&
             (guest_address - mip_base) % slice_size == 0 &&
-            (pitch >> this_dim) == (mip_pitch >> info_dim)) {
+            (mips_layout[0].pitch >> this_dim) == (mip_pitch >> info_dim)) {
             mip = m;
             break;
         }
@@ -261,7 +341,8 @@ s32 ImageInfo::MipOf(const ImageInfo& info) const {
 }
 
 s32 ImageInfo::SliceOf(const ImageInfo& info, s32 mip) const {
-    if (!IsCompatible(info)) {
+    if (!IsCompatible(info) || mip < 0 || u32(mip) >= info.resources.levels ||
+        u32(mip) >= info.mips_layout.size() || !info.resources.layers) {
         return -1;
     }
 
@@ -279,24 +360,34 @@ s32 ImageInfo::SliceOf(const ImageInfo& info, s32 mip) const {
     const auto this_dim = props.is_block ? 2 : 0;
     const auto this_w = std::max(size.width >> this_dim, 1u);
     const auto this_h = std::max(size.height >> this_dim, 1u);
-    const auto this_p = std::max(pitch >> this_dim, 1u);
+    const auto this_p = std::max(mips_layout[0].pitch >> this_dim, 1u);
     if ((this_w != mip_w) || (this_h != mip_h) || (this_p != mip_p)) {
         return -1;
     }
 
     // Check for size alignment.
     const u32 slice_size = info.mips_layout[mip].size / info.resources.layers;
-    if (guest_size % slice_size != 0) {
+    if (!slice_size || !guest_size || guest_size % slice_size != 0) {
         return -1;
     }
 
     // Ensure that address is aligned too.
-    const auto addr_diff = guest_address - (info.guest_address + info.mips_layout[mip].offset);
-    if ((addr_diff % guest_size) != 0) {
+    const auto mip_base = info.guest_address + info.mips_layout[mip].offset;
+    if (guest_address < mip_base) {
+        return -1;
+    }
+    const auto addr_diff = guest_address - mip_base;
+    if (addr_diff % slice_size != 0 || addr_diff / slice_size >= info.resources.layers) {
         return -1;
     }
 
-    return addr_diff / guest_size;
+    // Divide by ONE parent slice, not the entire multi-layer requested image.
+    const u32 slice = static_cast<u32>(addr_diff / slice_size);
+    if (!info.resources.Contains(resources, {u32(mip), slice}) ||
+        guest_size > info.mips_layout[mip].size - addr_diff) {
+        return -1;
+    }
+    return static_cast<s32>(slice);
 }
 
 } // namespace VideoCore

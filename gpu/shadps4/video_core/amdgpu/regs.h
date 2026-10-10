@@ -7,6 +7,10 @@
 #include <bitset>
 #include <cstring>
 #include <vector>
+#ifdef _LIBCPP_VERSION
+#include <array>
+#include <bit>
+#endif
 #include "video_core/amdgpu/regs_color.h"
 #include "video_core/amdgpu/regs_depth.h"
 #include "video_core/amdgpu/regs_primitive.h"
@@ -193,13 +197,46 @@ union Regs {
     void SetDefaults();
 };
 
+#ifdef _LIBCPP_VERSION
+// bbport: the std::bitset subset RegDirty uses, including libstdc++'s _Find_first/_Find_next
+// (not in libc++), over 64-bit words.
+template <std::size_t N>
+class BlockBits {
+public:
+    void set(std::size_t bit) { words[bit / 64] |= u64(1) << (bit % 64); }
+    void reset() { words = {}; }
+    bool test(std::size_t bit) const { return (words[bit / 64] >> (bit % 64)) & 1; }
+    static constexpr std::size_t size() { return N; }
+    std::size_t _Find_first() const { return Scan(0); }
+    std::size_t _Find_next(std::size_t bit) const { return bit + 1 >= N ? N : Scan(bit + 1); }
+
+private:
+    std::size_t Scan(std::size_t from) const {
+        std::size_t word = from / 64;
+        u64 bits = words[word] & (~u64(0) << (from % 64));
+        while (!bits) {
+            if (++word == words.size()) {
+                return N;
+            }
+            bits = words[word];
+        }
+        return std::min<std::size_t>(word * 64 + std::countr_zero(bits), N);
+    }
+    std::array<u64, (N + 63) / 64> words{};
+};
+#endif
+
 // bbport: register blocks written by a stretch of packets, and their values at its end. The
 // draw-preparation scanner records one per submission so a worker reaches the state at the
 // start of any later submission without replaying the packets in between.
 struct RegDirty {
     static constexpr u32 BlockWords = 32;
     static constexpr u32 NumBlocks = Regs::NumRegs / BlockWords;
+#ifdef _LIBCPP_VERSION
+    BlockBits<NumBlocks> blocks;
+#else
     std::bitset<NumBlocks> blocks;
+#endif
     bool reset = false; ///< ClearState: defaults, then only the blocks marked after it
 
     void Mark(u32 word, u32 count) {

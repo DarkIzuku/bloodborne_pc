@@ -11,7 +11,7 @@
 #include "common/error.h"
 #include "common/logging/log.h"
 #include "common/thread.h"
-#include "ntapi.h"
+// bbport: common/ntapi.h (ntdll entry points) is not used by the vendored code.
 #ifdef __APPLE__
 #include <mach/mach.h>
 #include <mach/mach_time.h>

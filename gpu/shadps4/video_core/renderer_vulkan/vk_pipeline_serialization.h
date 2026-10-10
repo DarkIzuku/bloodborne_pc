@@ -17,5 +17,8 @@ void RegisterShaderMeta(const Shader::Info& info,
                         const std::optional<Shader::Gcn::FetchShaderData>& fetch_shader_data,
                         const Shader::StageSpecialization& spec, size_t perm_hash, size_t perm_idx);
 void RegisterShaderBinary(std::vector<u32>&& spv, u64 pgm_hash, size_t perm_idx);
+bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
+                    std::optional<Shader::Gcn::FetchShaderData>& fetch_shader_data,
+                    Shader::StageSpecialization& spec, size_t& perm_idx, u64 expected_hash);
 
 } // namespace Vulkan

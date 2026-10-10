@@ -29,6 +29,7 @@ public:
         vk::Image image;
         vk::ImageView view;
         u32 width, height;
+        vk::Format format = vk::Format::eUndefined; ///< needed by DLSS (vk_dlss.h)
     };
     struct Frame {
         vk::CommandBuffer cmdbuf;

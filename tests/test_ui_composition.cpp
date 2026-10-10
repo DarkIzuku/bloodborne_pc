@@ -19,11 +19,29 @@ int main() {
     assert(MovieShader(0x34e8a281) && MovieShader(0x24042a9b));
     assert(!MovieShader(0x0b0acf50)); // fullscreen post/tonemap also has a native viewport
     assert(!MovieShader(0x6c62a79f)); // shadow geometry
+    // Captured loading/HUD clip masks: no colour exports, then the item image.
+    assert(ObserveDraw(0, 0xa400228b, true));
+    assert(ObserveDraw(0, 0x34e8a281, true));
+    assert(ObserveDraw(1, 0x44072322, true));
+    assert(!ObserveDraw(0, 0x6c62a79f, true)); // scene shadow/depth pass
+    assert(!ObserveDraw(0, 0xa400228b, false));
+    assert(!ObserveDraw(3, 0xa400228b, true)); // multiple scene targets
     const auto display = Scale(960, 540, 1920, 1080, false);
     assert(display[0] == 2 && display[1] == 2);
     const auto ui = Scale(960, 540, 1920, 1080, true);
     assert(ui[0] == 1 && ui[1] == 1); // don't double an already native UI viewport
     const auto larger = Scale(960, 540, 3840, 2160, true);
     assert(larger[0] == 2 && larger[1] == 2);
+    // Native UI must preserve circles/fonts and share the clip-mask transform.
+    for(auto size: {std::array<uint32_t,2>{1920,1080},{2560,1440},{3840,2160},{3440,1440},{5120,1440}}) {
+        auto f=Fit(size[0],size[1]);
+        assert(f.scale[0]==f.scale[1]);
+        assert(f.offset[0]>=0 && f.offset[1]>=0);
+        assert(std::abs(1920*f.scale[0]+2*f.offset[0]-size[0])<.01f);
+        assert(std::abs(1080*f.scale[1]+2*f.offset[1]-size[1])<.01f);
+    }
+    assert(Fit(1920,1080).offset==(std::array<float,2>{0,0}));
+    assert(std::abs(Fit(3440,1440).offset[0]-440)<.01f);
+    assert(std::abs(Fit(5120,1440).offset[0]-1280)<.01f);
     std::puts("UI composition: PASS (menu without camera, HUD, FSR off, viewport scaling)");
 }

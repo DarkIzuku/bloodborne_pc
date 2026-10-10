@@ -6,8 +6,13 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import sys
 import tempfile
+
+# Windows: symbolic links need administrator rights or developer mode. Directories become
+# junctions and files hard links instead (a copy when the mod is on another volume).
+WINDOWS = os.name == 'nt'
 
 # Top-level folders of the game's dvdroot_ps4: a mod made of these is a dvdroot_ps4 itself.
 GAME_FOLDERS = {'action', 'chr', 'event', 'facegen', 'font', 'map', 'menu', 'movie', 'msg', 'mtd',
@@ -101,16 +106,60 @@ def mod_files(folder):
             yield relative, source
 
 
+def is_link(path):
+    return path.is_symlink() or (WINDOWS and path.is_junction())
+
+
+def link(path, target):
+    """`path` refers to `target` (a directory or a file) without copying the game."""
+    if not WINDOWS:
+        path.symlink_to(target, target_is_directory=target.is_dir())
+    elif target.is_dir():
+        import _winapi
+        _winapi.CreateJunction(str(target), str(path))
+    else:
+        try:
+            os.link(target, path)
+        except OSError:
+            shutil.copy2(target, path)
+
+
+def unlink(path):
+    """Removes a link made by `link` (never what it refers to)."""
+    if WINDOWS and path.is_junction():
+        os.rmdir(path)
+        return
+    try:
+        path.unlink()
+    except PermissionError:
+        if not WINDOWS or is_link(path):
+            raise
+        os.chmod(path, stat.S_IWRITE)  # a read-only copy (hard links share the attribute)
+        path.unlink()
+
+
+def remove_overlay(path):
+    """Deletes an overlay from build_overlay without following its links."""
+    path = Path(path)
+    if is_link(path) or not path.is_dir():
+        if is_link(path) or path.exists():
+            unlink(path)
+        return
+    for entry in path.iterdir():
+        remove_overlay(entry)
+    os.rmdir(path)
+
+
 def expand(directory):
     """Materialize one directory level; never write through a directory link."""
-    if directory.is_symlink():
+    if is_link(directory):
         target = directory.resolve(strict=True)
         if not target.is_dir():
             raise ValueError(f'File/directory conflict at {directory.name}')
-        directory.unlink()
+        unlink(directory)
         directory.mkdir()
         for entry in target.iterdir():
-            (directory / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
+            link(directory / entry.name, entry)
     elif directory.exists() and not directory.is_dir():
         raise ValueError(f'File/directory conflict at {directory.name}')
     else:
@@ -138,7 +187,7 @@ def build_overlay(game, out, mods):
     overlay = Path(tempfile.mkdtemp(prefix='mod-game-', dir=out))
     try:
         for entry in game.iterdir():
-            (overlay / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
+            link(overlay / entry.name, entry)
         replaced = added = 0
         for relative, source in replacements:
             # Each component takes the game's spelling when it exists in another case.
@@ -150,15 +199,19 @@ def build_overlay(game, out, mods):
             if destination.is_symlink():
                 replaced += destination.resolve().is_relative_to(game)
                 destination.unlink()
+            elif WINDOWS and destination.is_file():
+                # A hard link or copy: every file in the overlay is one of ours.
+                replaced += 1
+                unlink(destination)
             elif destination.exists():
                 raise ValueError(f'File/directory conflict: {relative}')
             else:
                 added += 1
-            destination.symlink_to(source)
+            link(destination, source)
         print(f'Mods: {replaced} game files replaced, {added} added', file=sys.stderr)
         return overlay
     except BaseException:
-        shutil.rmtree(overlay)
+        remove_overlay(overlay)
         raise
 
 
