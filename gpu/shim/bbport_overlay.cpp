@@ -6,7 +6,12 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <deque>
+#include <vector>
 #include <mutex>
 #include <string>
 
@@ -44,6 +49,8 @@ extern "C" const unsigned char bb_font_ttf_end[];
 #endif
 
 extern "C" void runtime_restart(void); // bb-probe (probe.c)
+extern "C" int runtime_trophy(int id, const char** name, const char** description, int* grade,
+                              int* hidden, int64_t* unlocked_time); // runtime_services.c
 
 namespace BbOverlay {
 
@@ -61,6 +68,18 @@ float base_scale = 1.0f;
 std::mutex prompt_mutex;
 std::atomic<bool> prompt_active{false};
 std::string prompt_title, prompt_text;
+
+// Trophy popups, shown one after another (the platinum follows the last trophy).
+struct Banner {
+    std::string name;
+    int grade;           // 1 bronze .. 4 platinum
+    bool sounded = false;
+};
+std::mutex toast_mutex;
+std::deque<Banner> toasts;
+std::chrono::steady_clock::time_point toast_since{};
+std::atomic<bool> toast_pending{false};
+bool trophies_open = false; // the trophy list window, opened from the menu
 
 // Present rate for the FPS counter.
 std::chrono::steady_clock::time_point last_present{};
@@ -507,6 +526,10 @@ void Menu() {
         keep_open = false;
     }
     ImGui::SameLine();
+    if (ImGui::Button(BbSettings::MenuText("Trophies", "Трофеи"))) {
+        trophies_open = !trophies_open;
+    }
+    ImGui::SameLine();
     ImGui::TextDisabled("%s", BbSettings::MenuText("Settings are saved to bbport.ini",
                                              "Настройки сохраняются в bbport.ini"));
     ImGui::End();
@@ -556,7 +579,246 @@ void TextPrompt() {
     ImGui::End();
 }
 
+// The trophy chime: a short two-note bell made here (three notes for the platinum), on its
+// own SDL stream beside the game's. BB_AUDIO=none keeps it silent like the game.
+void Chime(bool platinum) {
+    static SDL_AudioStream* stream = []() -> SDL_AudioStream* {
+        const char* mode = std::getenv("BB_AUDIO");
+        if ((mode && !std::strcmp(mode, "none")) || !SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+            return nullptr;
+        }
+        const SDL_AudioSpec spec{SDL_AUDIO_F32, 1, 48000};
+        SDL_AudioStream* s =
+            SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+        if (s) {
+            SDL_ResumeAudioStreamDevice(s);
+        }
+        return s;
+    }();
+    if (!stream) {
+        return;
+    }
+    constexpr int rate = 48000;
+    constexpr float two_pi = 6.2831853f;
+    std::vector<float> pcm(rate * 6 / 5);
+    const float notes[] = {1318.5f, 1975.5f, 2637.0f}; // E6, B6, E7
+    for (int k = 0; k < (platinum ? 3 : 2); ++k) {
+        for (std::size_t i = std::size_t(k * 0.09f * rate); i < pcm.size(); ++i) {
+            const float t = float(i) / rate - k * 0.09f, f = notes[k];
+            const float envelope = std::min(t / 0.004f, 1.0f) * std::exp(-t * 5.0f);
+            // A bell: the fundamental and a quickly fading inharmonic partial.
+            pcm[i] += 0.12f * envelope *
+                      (std::sin(two_pi * f * t) + 0.35f * std::exp(-t * 8.0f) * std::sin(two_pi * 2.76f * f * t));
+        }
+    }
+    SDL_PutAudioStreamData(stream, pcm.data(), int(pcm.size() * sizeof(float)));
+}
+
+// The PS4's trophy banner: a dark panel that slides in at the top left with the trophy cup
+// in its grade's colour, "You have earned a trophy." and the trophy's name.
+void Toast() {
+    constexpr float seconds = 5.0f, slide = 0.4f;
+    Banner toast;
+    float age;
+    bool play = false;
+    {
+        std::scoped_lock lock{toast_mutex};
+        const auto now = std::chrono::steady_clock::now();
+        age = std::chrono::duration<float>(now - toast_since).count();
+        if (age > seconds) {
+            toasts.pop_front();
+            toast_since = now;
+            age = 0.0f;
+        }
+        toast_pending = !toasts.empty();
+        if (toasts.empty()) {
+            return;
+        }
+        play = !toasts.front().sounded;
+        toasts.front().sounded = true;
+        toast = toasts.front();
+    }
+    if (play) {
+        Chime(toast.grade == 4);
+    }
+    static const ImU32 grade_colors[] = {
+        IM_COL32(200, 200, 200, 255), IM_COL32(205, 133, 77, 255), IM_COL32(199, 204, 214, 255),
+        IM_COL32(245, 199, 66, 255), IM_COL32(158, 209, 255, 255)};
+    const ImU32 cup = grade_colors[std::clamp(toast.grade, 0, 4)];
+    // Slide in and out (ease-out cubic), fading with the motion.
+    const float in = std::clamp(std::min(age, seconds - age) / slide, 0.0f, 1.0f);
+    const float eased = 1.0f - (1.0f - in) * (1.0f - in) * (1.0f - in);
+
+    const float s = base_scale;
+    ImFont* font = ImGui::GetFont();
+    const float small = ImGui::GetFontSize(), large = small * 1.2f;
+    const char* line = BbSettings::MenuText("You have earned a trophy.", "Вы получили трофей.");
+    const float text_w = std::max(font->CalcTextSizeA(large, FLT_MAX, 0.0f, toast.name.c_str()).x,
+                                  font->CalcTextSizeA(small, FLT_MAX, 0.0f, line).x);
+    const float height = 84.0f * s, icon = 60.0f * s, gap = 12.0f * s;
+    const float width = std::max(360.0f * s, gap + icon + gap * 1.5f + text_w + gap * 2.0f);
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float margin = 28.0f * s;
+    const ImVec2 at(viewport->WorkPos.x + margin - (width + margin) * (1.0f - eased),
+                    viewport->WorkPos.y + margin);
+    const auto alpha = [&](ImU32 c, float a) {
+        return (c & ~IM_COL32_A_MASK) | (ImU32(((c >> IM_COL32_A_SHIFT) & 0xff) * a * eased) << IM_COL32_A_SHIFT);
+    };
+
+    ImDrawList* draw = ImGui::GetForegroundDrawList();
+    const ImVec2 end(at.x + width, at.y + height);
+    draw->AddRectFilled(ImVec2(at.x + 3 * s, at.y + 4 * s), ImVec2(end.x + 3 * s, end.y + 4 * s),
+                        alpha(IM_COL32(0, 0, 0, 255), 0.35f), 10.0f * s); // shadow
+    draw->AddRectFilled(at, end, alpha(IM_COL32(24, 26, 31, 255), 0.94f), 10.0f * s);
+    draw->AddRect(at, end, alpha(IM_COL32(255, 255, 255, 255), 0.10f), 10.0f * s, 0, 1.0f * s);
+
+    // The icon tile and the cup: bowl, handles, stem and base.
+    const ImVec2 tile(at.x + gap, at.y + (height - icon) * 0.5f);
+    draw->AddRectFilled(tile, ImVec2(tile.x + icon, tile.y + icon), alpha(IM_COL32(44, 48, 56, 255), 1.0f), 6.0f * s);
+    const ImVec2 c(tile.x + icon * 0.5f, tile.y + icon * 0.5f);
+    const float u = icon * 0.5f;
+    const ImU32 cup_col = alpha(cup, 1.0f);
+    draw->AddRectFilled(ImVec2(c.x - 0.42f * u, c.y - 0.55f * u), ImVec2(c.x + 0.42f * u, c.y + 0.05f * u), cup_col,
+                        0.38f * u, ImDrawFlags_RoundCornersBottom);
+    draw->AddCircle(ImVec2(c.x - 0.45f * u, c.y - 0.32f * u), 0.17f * u, cup_col, 0, 0.09f * u);
+    draw->AddCircle(ImVec2(c.x + 0.45f * u, c.y - 0.32f * u), 0.17f * u, cup_col, 0, 0.09f * u);
+    draw->AddRectFilled(ImVec2(c.x - 0.07f * u, c.y + 0.02f * u), ImVec2(c.x + 0.07f * u, c.y + 0.36f * u), cup_col);
+    draw->AddRectFilled(ImVec2(c.x - 0.30f * u, c.y + 0.34f * u), ImVec2(c.x + 0.30f * u, c.y + 0.50f * u), cup_col,
+                        0.05f * u);
+    draw->AddRectFilled(ImVec2(c.x - 0.28f * u, c.y - 0.48f * u), ImVec2(c.x - 0.16f * u, c.y - 0.10f * u),
+                        alpha(IM_COL32(255, 255, 255, 255), 0.35f), 0.06f * u); // shine
+
+    const float x = tile.x + icon + gap * 1.5f;
+    const float top = at.y + (height - small - large - 6.0f * s) * 0.5f;
+    draw->AddText(font, small, ImVec2(x, top), alpha(IM_COL32(170, 176, 186, 255), 1.0f), line);
+    draw->AddText(font, large, ImVec2(x, top + small + 6.0f * s), alpha(IM_COL32(255, 255, 255, 255), 1.0f),
+                  toast.name.c_str());
+}
+
+// The trophy list, laid out like the PS4 one: progress, grade counts, earned/locked filter,
+// hidden trophies masked until earned.
+void TrophyList() {
+    using BbSettings::MenuText;
+    struct Row {
+        const char *name, *description;
+        int grade, hidden;
+        int64_t when;
+    };
+    static constexpr int points[] = {0, 15, 30, 90, 180}; // PSN weights: progress counts points
+    static const ImVec4 colors[] = {{}, {0.80f, 0.52f, 0.30f, 1.0f}, {0.78f, 0.80f, 0.84f, 1.0f},
+                                    {0.96f, 0.78f, 0.26f, 1.0f}, {0.62f, 0.82f, 1.0f, 1.0f}};
+    const char* grades[] = {"", MenuText("Bronze", "Бронза"), MenuText("Silver", "Серебро"),
+                            MenuText("Gold", "Золото"), MenuText("Platinum", "Платина")};
+    Row rows[64];
+    int count = 0, earned = 0, got_points = 0, all_points = 0;
+    int grade_earned[5]{}, grade_total[5]{};
+    while (count < 64 && runtime_trophy(count, &rows[count].name, &rows[count].description,
+                                        &rows[count].grade, &rows[count].hidden,
+                                        &rows[count].when)) {
+        const Row& r = rows[count++];
+        const int g = std::clamp(r.grade, 0, 4);
+        all_points += points[g];
+        ++grade_total[g];
+        if (r.when) {
+            ++earned;
+            got_points += points[g];
+            ++grade_earned[g];
+        }
+    }
+
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                   viewport->WorkPos.y + viewport->WorkSize.y * 0.5f),
+                            ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(760.0f * base_scale, 640.0f * base_scale), ImGuiCond_Appearing);
+    if (!ImGui::Begin(MenuText("Trophies###bbport_trophies", "Трофеи###bbport_trophies"),
+                      &trophies_open, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::End();
+        return;
+    }
+    const float progress = all_points ? float(got_points) / float(all_points) : 0.0f;
+    ImGui::Text(MenuText("Earned %d of %d", "Получено %d из %d"), earned, count);
+    char percent[16];
+    std::snprintf(percent, sizeof(percent), "%d%%", int(progress * 100.0f));
+    ImGui::ProgressBar(progress, ImVec2(-1.0f, 0.0f), percent);
+    for (int g = 4; g >= 1; --g) {
+        ImGui::TextColored(colors[g], "%s %d/%d", grades[g], grade_earned[g], grade_total[g]);
+        ImGui::SameLine(0.0f, 24.0f * base_scale);
+    }
+    ImGui::NewLine();
+
+    static int filter = 0; // all, earned, not earned
+    ImGui::RadioButton(MenuText("All", "Все"), &filter, 0);
+    ImGui::SameLine();
+    ImGui::RadioButton(MenuText("Earned", "Полученные"), &filter, 1);
+    ImGui::SameLine();
+    ImGui::RadioButton(MenuText("Not earned", "Не полученные"), &filter, 2);
+
+    if (ImGui::BeginTable("##trophies", 3,
+                          ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg |
+                              ImGuiTableFlags_BordersInnerH,
+                          ImVec2(0.0f, -1.0f))) {
+        ImGui::TableSetupColumn("##grade", ImGuiTableColumnFlags_WidthFixed, 90.0f * base_scale);
+        ImGui::TableSetupColumn("##trophy", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("##date", ImGuiTableColumnFlags_WidthFixed, 150.0f * base_scale);
+        int group_shown = -1;
+        for (int i = 0; i < count; ++i) {
+            const Row& r = rows[i];
+            if ((filter == 1 && !r.when) || (filter == 2 && r.when)) {
+                continue;
+            }
+            const int group = i >= 34 ? 1 : 0; // 34..39: The Old Hunters
+            if (group != group_shown) {
+                group_shown = group;
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(1);
+                ImGui::SeparatorText(group ? "The Old Hunters" : "Bloodborne");
+            }
+            ImGui::TableNextRow();
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, r.when ? 1.0f : 0.55f);
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextColored(colors[std::clamp(r.grade, 0, 4)], "%s", grades[std::clamp(r.grade, 0, 4)]);
+            ImGui::TableSetColumnIndex(1);
+            if (r.hidden && !r.when) {
+                ImGui::TextUnformatted(MenuText("Hidden Trophy", "Скрытый трофей"));
+                ImGui::TextDisabled("%s", MenuText("Keep playing to reveal this trophy.",
+                                                   "Продолжайте играть, чтобы открыть этот трофей."));
+            } else {
+                ImGui::TextUnformatted(r.name);
+                ImGui::PushTextWrapPos(0.0f);
+                ImGui::TextDisabled("%s", r.description);
+                ImGui::PopTextWrapPos();
+            }
+            ImGui::TableSetColumnIndex(2);
+            if (r.when > 1) {
+                const std::time_t t = std::time_t(r.when);
+                char date[32] = "";
+                if (const std::tm* local = std::localtime(&t)) { // present thread only
+                    std::strftime(date, sizeof(date), "%Y-%m-%d %H:%M", local);
+                }
+                ImGui::TextUnformatted(date);
+            } else if (r.when) {
+                ImGui::TextUnformatted(MenuText("Earned", "Получен"));
+            } else {
+                ImGui::TextDisabled("%s", MenuText("Not earned", "Не получен"));
+            }
+            ImGui::PopStyleVar();
+        }
+        ImGui::EndTable();
+    }
+    ImGui::End();
+}
+
 } // namespace
+
+void Notify(const std::string& name, int grade) {
+    std::scoped_lock lock{toast_mutex};
+    if (toasts.empty()) {
+        toast_since = std::chrono::steady_clock::now();
+    }
+    toasts.push_back({name, grade});
+    toast_pending = true;
+}
 
 void SetTextPrompt(bool active, const std::string& prompt, const std::string& text) {
     {
@@ -733,7 +995,8 @@ bool HandleEvent(const SDL_Event& event) {
 }
 
 bool Visible() {
-    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps);
+    return initialized &&
+           (menu_open || prompt_active || toast_pending || BbSettings::Get().show_fps);
 }
 
 bool MenuOpen() {
@@ -773,12 +1036,18 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     ImGui::NewFrame();
     if (menu_open) {
         Menu();
+        if (trophies_open) {
+            TrophyList();
+        }
     }
     if (BbSettings::Get().show_fps && !menu_open) {
         FpsCounter();
     }
     if (prompt_active && !menu_open) {
         TextPrompt();
+    }
+    if (toast_pending && !menu_open) {
+        Toast();
     }
     ImGui::Render();
 

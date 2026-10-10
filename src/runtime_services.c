@@ -283,7 +283,93 @@ static ABI int32_t ime_result(uint32_t *result) {
 }
 static ABI int32_t ime_term(void) { memset(&ime,0,sizeof(ime)); return 0; }
 
-/* ---- Trophies: accepted locally, recorded in the log ---- */
+/* ---- Trophies: kept in <user>/trophies.txt ("id unix_time name" per line), shown by the overlay ----
+ * Bloodborne's trophy list by id (TROPCONF order; 34..39 are The Old Hunters), as PSN lists it. */
+enum { BRONZE=1, SILVER, GOLD, PLATINUM };
+typedef struct { const char *name, *description; int grade, hidden; } Trophy;
+static const Trophy trophies[]={
+    {"Bloodborne","All trophies acquired. Hats off!",PLATINUM,0},
+    {"Yharnam Sunrise","You lived through the hunt, and saw another day.",GOLD,1},
+    {"Honoring Wishes","Captivated by the Moon Presence, you pledge to watch over the Hunter's Dream.",GOLD,1},
+    {"Childhood's Beginning","You became an infant Great One, lifting humanity into its next childhood.",GOLD,1},
+    {"Yharnam, Pthumerian Queen","Defeat Yharnam, Blood Queen of the Old Labyrinth.",GOLD,1},
+    {"Hunter's Essence","Acquire all hunter weapons.",GOLD,0},
+    {"Hunter's Craft","Acquire all special hunter tools.",GOLD,0},
+    {"Weapon Master","Acquire a weapon of the highest level.",SILVER,0},
+    {"Blood Gem Master","Acquire an extremely precious blood gem.",SILVER,0},
+    {"Rune Master","Acquire an extremely precious Caryll Rune.",SILVER,0},
+    {"Cainhurst","Gain entry to Cainhurst, the lost and ruined castle.",SILVER,1},
+    {"The Choir","Gain entry to the realm of the Choir, the high stratum of the Healing Church.",SILVER,1},
+    {"The Source of the Dream","Discover the abandoned old workshop, the source of the Hunter's Dream.",SILVER,1},
+    {"Nightmare Lecture Building","Gain entry into the Byrgenwerth lecture building, that drifts within the realm of nightmare.",SILVER,1},
+    {"Father Gascoigne","Defeat the beast that once was Father Gascoigne.",BRONZE,1},
+    {"Vicar Amelia","Defeat the beast that once was Vicar Amelia.",BRONZE,1},
+    {"Shadow of Yharnam","Defeat the Shadow of Yharnam.",BRONZE,1},
+    {"Rom, the Vacuous Spider","Defeat Great One: Rom, the Vacuous Spider.",BRONZE,1},
+    {"The One Reborn","Defeat the One Reborn.",BRONZE,1},
+    {"Micolash, Host of the Nightmare","Defeat Micolash, Host of the Nightmare.",BRONZE,1},
+    {"Mergo's Wet Nurse","Defeat Great One: Mergo's Wet Nurse.",BRONZE,1},
+    {"Cleric Beast","Defeat Cleric Beast.",BRONZE,1},
+    {"Blood-starved Beast","Defeat Blood-starved Beast.",BRONZE,1},
+    {"The Witch of Hemwick","Defeat the Witch of Hemwick.",BRONZE,1},
+    {"Darkbeast Paarl","Defeat Darkbeast Paarl.",BRONZE,1},
+    {"Amygdala","Defeat Great One: Amygdala.",BRONZE,1},
+    {"Martyr Logarius","Defeat Martyr Logarius.",BRONZE,1},
+    {"Celestial Emissary","Defeat Great One: Celestial Emissary.",BRONZE,1},
+    {"Ebrietas, Daughter of the Cosmos","Defeat Great One: Ebrietas, Daughter of the Cosmos.",BRONZE,1},
+    {"Blood Gem Contact","Acquire a blood gem that imbues hunter weapons with special strength.",BRONZE,0},
+    {"Rune Contact","Acquire a Caryll Rune that endows hunters with special strength.",BRONZE,0},
+    {"Chalice of Pthumeru","Acquire the Chalice of Pthumeru that seals the catacombs that form a web deep below Yharnam.",BRONZE,0},
+    {"Chalice of Ailing Loran","Acquire the Chalice of Ailing Loran that seals the tragic land lost to the sands.",BRONZE,1},
+    {"Chalice of Isz","Acquire the Great Chalice of Isz that seals the home of the cosmic kin.",BRONZE,1},
+    {"Old Hunter's Essence","Acquire all old hunter weapons.",GOLD,0},
+    {"Orphan of Kos","Defeat Great One: Orphan of Kos.",SILVER,1},
+    {"Ludwig, the Holy Blade","Defeat the beast that was once Ludwig, the Holy Blade.",BRONZE,1},
+    {"Lady Maria of the Astral Clocktower","Defeat Lady Maria of the Astral Clocktower.",BRONZE,1},
+    {"Living Failures","Defeat the failed attempts to become Great Ones.",BRONZE,1},
+    {"Laurence, the First Vicar","Defeat the beast that was once Laurence, the First Vicar.",BRONZE,1},
+};
+#define TROPHY_COUNT 40
+_Static_assert(sizeof(trophies)/sizeof(*trophies)==TROPHY_COUNT,"trophy list");
+#define TROPHY_BASE_LAST 33 /* the platinum (id 0) needs 1..33; DLC trophies do not count */
+static uint64_t trophies_unlocked;
+static int64_t trophy_times[TROPHY_COUNT];
+static int trophies_loaded;
+static void trophy_path(char *out,size_t size) { snprintf(out,size,"%s/trophies.txt",runtime_file_user_dir()); }
+static void trophies_load(void) { /* under lock */
+    if (trophies_loaded) return;
+    trophies_loaded=1;
+    char path[1024]; trophy_path(path,sizeof(path));
+    FILE *f=fopen(path,"r");
+    if (!f) return;
+    char line[256];
+    while (fgets(line,sizeof(line),f)) {
+        int id; long long when=0;
+        if (sscanf(line,"%d %lld",&id,&when)<1 || id<0 || id>=TROPHY_COUNT) continue;
+        trophies_unlocked|=1ull<<id;
+        trophy_times[id]=when;
+    }
+    fclose(f);
+}
+static void trophy_award(int id) { /* under lock */
+    trophies_unlocked|=1ull<<id;
+    trophy_times[id]=(int64_t)time(NULL);
+    char path[1024]; trophy_path(path,sizeof(path));
+    FILE *f=fopen(path,"a");
+    if (f) { fprintf(f,"%d %lld %s\n",id,(long long)trophy_times[id],trophies[id].name); fclose(f); }
+    printf("Runtime: trophy %d unlocked: %s\n",id,trophies[id].name);
+    bbgpu_trophy_popup(trophies[id].name,trophies[id].grade);
+}
+/* Overlay's trophy list (any thread): 0 past the last id; *unlocked_time is 0 while locked. */
+int runtime_trophy(int id,const char **name,const char **description,int *grade,int *hidden,int64_t *unlocked_time) {
+    if (id<0 || id>=TROPHY_COUNT) return 0;
+    *name=trophies[id].name; *description=trophies[id].description;
+    *grade=trophies[id].grade; *hidden=trophies[id].hidden;
+    host_lock(&lock); trophies_load();
+    *unlocked_time=trophies_unlocked>>id & 1 ? (trophy_times[id] ? trophy_times[id] : 1) : 0;
+    host_unlock(&lock);
+    return 1;
+}
 static ABI int32_t trophy_context(int32_t *ctx,int32_t user,uint32_t label,uint64_t options) {
     (void)user; (void)label; (void)options;
     if (!ctx) return TROPHY_INVALID;
@@ -293,8 +379,19 @@ static ABI int32_t trophy_handle(int32_t *handle) { if (!handle) return TROPHY_I
 static ABI int32_t trophy_register(int32_t ctx,int32_t handle,uint64_t options) { (void)ctx; (void)handle; (void)options; return 0; }
 static ABI int32_t trophy_unlock(int32_t ctx,int32_t handle,int32_t id,int32_t *platinum) {
     (void)ctx; (void)handle;
-    printf("Runtime: trophy %d unlocked\n",id);
     if (platinum) *platinum=-1;
+    if (id<0 || id>=TROPHY_COUNT) { printf("Runtime: unknown trophy %d\n",id); return 0; }
+    host_lock(&lock);
+    trophies_load();
+    if (!(trophies_unlocked>>id & 1)) {
+        trophy_award(id);
+        const uint64_t base=((1ull<<(TROPHY_BASE_LAST+1))-1) & ~1ull;
+        if ((trophies_unlocked&base)==base && !(trophies_unlocked&1)) {
+            trophy_award(0);
+            if (platinum) *platinum=0;
+        }
+    }
+    host_unlock(&lock);
     return 0;
 }
 static ABI int32_t trophy_game_info(int32_t ctx,int32_t handle,void *details,void *data) {
@@ -304,7 +401,15 @@ static ABI int32_t trophy_game_info(int32_t ctx,int32_t handle,void *details,voi
     return 0;
 }
 static ABI int32_t trophy_info(int32_t ctx,int32_t handle,int32_t id,void *details,void *data) {
-    (void)id; return trophy_game_info(ctx,handle,details,data);
+    trophy_game_info(ctx,handle,details,data);
+    uint64_t size=0;
+    if (data) memcpy(&size,data,8);
+    if (size>=16 && id>=0 && id<TROPHY_COUNT) { /* SceNpTrophyData: size, trophyId, unlocked */
+        host_lock(&lock); trophies_load(); const int unlocked=(int)(trophies_unlocked>>id & 1); host_unlock(&lock);
+        memcpy((char *)data+8,&id,4);
+        ((char *)data)[12]=(char)unlocked;
+    }
+    return 0;
 }
 
 /* ---- PlayGo: fully installed package ---- */

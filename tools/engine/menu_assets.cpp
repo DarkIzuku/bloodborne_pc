@@ -31,7 +31,7 @@ using Bytes = std::vector<std::uint8_t>;
 
 // Bumped whenever a generator or the recipe changes, so installs remake their
 // assets instead of keeping the last generation.
-constexpr int kGeneratorVersion = 8;  // 8: PC Enhancements' three rows; 7: the PC Enhancements section; 6: event text (group 30) for the altar's rebirth
+constexpr int kGeneratorVersion = 9;  // 9: the Trophies section; 8: PC Enhancements' three rows; 7: the PC Enhancements section; 6: event text (group 30) for the altar's rebirth
 
 const char kMessagesTsv[] =
 #include "pc_option_messages.inc"
@@ -765,7 +765,7 @@ Bytes add_list_slot(const Bytes& b, const std::string& list) {
     return out;
 }
 
-// The movie: eight sections, then the System list's scroll bar. PCDeck is
+// The movie: nine sections, then the System list's scroll bar. PCDeck is
 // opened on a Steam Deck only (engine/option_menu.cpp), but is always made.
 Bytes build_option_movie(const Bytes& src) {
     Bytes m = src;
@@ -788,6 +788,7 @@ Bytes build_option_movie(const Bytes& src) {
     section("PCCamera", 121020, 388, 3, 0, {"Item_3_0", "Item_4_0", "Item_5_0"});
     section("PCDeck", 123020, 389, 2, 0, {"Item_2_0", "Item_3_0", "Item_4_0", "Item_5_0"});
     section("PCEnhance", 124020, 390, 3, 0, {"Item_3_0", "Item_4_0", "Item_5_0"});
+    section("PCTrophies", 125020, 391, std::nullopt, 2, {});
     return add_scrollbar(m, "Top", 1290, 354.5);
 }
 

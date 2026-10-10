@@ -35,6 +35,9 @@ int bbgpu_text_input_begin(const char *initial_utf8, const char *prompt_utf8);
 int bbgpu_text_input_poll(char *out_utf8, uint64_t size);
 /* 1 while the in-game settings menu is open: the game's pad input is held neutral. */
 int bbgpu_overlay_captures_input(void);
+/* Shows the trophy banner over the game for a few seconds, with its chime
+ * (UTF-8 name; grade 1 bronze, 2 silver, 3 gold, 4 platinum). */
+void bbgpu_trophy_popup(const char *name_utf8, int grade);
 /* Patches the loaded image before the game runs (image still writable): libGnm entry hooks. */
 void bbgpu_patch_image(unsigned char *image, uint64_t size);
 /* Number of symbols registered by the vendored libraries (diagnostics). */
