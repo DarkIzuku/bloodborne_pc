@@ -15,15 +15,15 @@ public partial class MainWindow
     readonly ObservableCollection<KeyBindingRow> keyBindings = new();
     static readonly (string key,string label,string binding)[] PcDefaults =
     {
-        ("move_forward","Avanzar","W"),("move_back","Retroceder","S"),("move_left","Izquierda","A"),("move_right","Derecha","D"),
-        ("walk","Caminar (mantener)","Left Alt"),("roll","Esquivar / correr","Space"),("lock_on","Fijar objetivo","Q"),
-        ("attack","Ataque","Mouse1"),("strong_attack","Ataque fuerte","V"),("strong_modifier","Modificador de ataque fuerte","Left Shift"),
-        ("transform","Transformar arma","C, Mouse3"),("firearm","Arma de fuego / parry","X, Mouse2"),
-        ("blood_vial","Vial de sangre","R"),("use_item","Usar objeto","F"),("interact","Interactuar","E"),
-        ("switch_item","Cambiar objeto","Down"),("switch_right","Cambiar arma derecha","Right"),("switch_left","Cambiar arma izquierda","Left"),
-        ("dpad_up","Cruceta arriba","Up"),("gestures","Gestos","G"),("personal_effects","Efectos personales","T"),
-        ("look_up","Cámara arriba","I"),("look_down","Cámara abajo","K"),("look_left","Cámara izquierda","J"),("look_right","Cámara derecha","L"),
-        ("menu","Menú","Escape"),("confirm","Aceptar en menús","Return"),("back","Volver en menús","Backspace"),("l3","Pulsar stick izquierdo","Left Ctrl")
+        ("move_forward","Move forward","W"),("move_back","Move back","S"),("move_left","Move left","A"),("move_right","Move right","D"),
+        ("walk","Walk (hold)","Left Alt"),("roll","Dodge / run","Space"),("lock_on","Lock on","Q"),
+        ("attack","Attack","Mouse1"),("strong_attack","Strong attack","V"),("strong_modifier","Strong attack modifier","Left Shift"),
+        ("transform","Transform weapon","C, Mouse3"),("firearm","Firearm / parry","X, Mouse2"),
+        ("blood_vial","Blood vial","R"),("use_item","Use item","F"),("interact","Interact","E"),
+        ("switch_item","Switch item","Down"),("switch_right","Switch right weapon","Right"),("switch_left","Switch left weapon","Left"),
+        ("dpad_up","D-pad up","Up"),("gestures","Gestures","G"),("personal_effects","Personal effects","T"),
+        ("look_up","Camera up","I"),("look_down","Camera down","K"),("look_left","Camera left","J"),("look_right","Camera right","L"),
+        ("menu","Menu","Escape"),("confirm","Confirm in menus","Return"),("back","Back in menus","Backspace"),("l3","Press left stick (L3)","Left Ctrl")
     };
     void LoadInputState()
     {
@@ -64,7 +64,7 @@ public partial class MainWindow
         foreach(var row in keyBindings)
         {
             string v=row.Binding.Trim();
-            if(v.Length>120 || v.Any(c=>c=='=' || c=='\r' || c=='\n'))throw new InvalidOperationException("Asignación de tecla inválida: "+row.Action);
+            if(v.Length>120 || v.Any(c=>c=='=' || c=='\r' || c=='\n'))throw new InvalidOperationException("Invalid key binding: "+row.Action);
             ini["bind."+row.Key]=v.Length==0?"none":v;
         }
     }

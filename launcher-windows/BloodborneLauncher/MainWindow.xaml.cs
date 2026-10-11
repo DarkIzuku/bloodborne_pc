@@ -120,7 +120,26 @@ public partial class MainWindow : Window
                 if (File.Exists(remembered)) state.GamePath = File.ReadAllText(remembered).Trim();
             }
         }
-        catch { state = new(); }
+        catch
+        {
+            // A damaged settings file falls back to the copy kept by the previous save.
+            try
+            {
+                state = JsonSerializer.Deserialize<LauncherState>(File.ReadAllText(statePath + ".bak")) ?? new();
+                FooterMessage.Text = "launcher-settings.json could not be read; loaded the last backup";
+            }
+            catch
+            {
+                state = new();
+                FooterMessage.Text = "launcher-settings.json could not be read; using default settings";
+            }
+        }
+        // Portable layout: the dump sits next to the launcher as CUSA03173.
+        string defaultGame = Path.Combine(root, "CUSA03173");
+        if (string.IsNullOrWhiteSpace(state.GamePath) ||
+            (!File.Exists(Path.Combine(state.GamePath, "eboot.bin")) && File.Exists(Path.Combine(defaultGame, "eboot.bin"))))
+            state.GamePath = defaultGame;
+        ini = LoadIni();
         // Migrate retired or malformed frame-rate selections before displaying or launching.
         state.Fps = NormalizeFps(state.Fps);
         string? mirror = ReadIniValue("change_appearance");
@@ -189,17 +208,22 @@ public partial class MainWindow : Window
         SetComboTag(box, value);
     }
 
-    string? ReadIniValue(string key)
+    Dictionary<string, string> ini = new();
+
+    Dictionary<string, string> LoadIni()
     {
+        var values = new Dictionary<string, string>();
         string path = Path.Combine(root, "bbport.ini");
-        if (!File.Exists(path)) return null;
+        if (!File.Exists(path)) return values;
         foreach (string line in File.ReadLines(path))
         {
             int equals = line.IndexOf('=');
-            if (equals > 0 && line[..equals].Trim() == key) return line[(equals + 1)..].Trim();
+            if (equals > 0) values.TryAdd(line[..equals].Trim(), line[(equals + 1)..].Trim());
         }
-        return null;
+        return values;
     }
+
+    string? ReadIniValue(string key) => ini.GetValueOrDefault(key);
 
     void ApplyStateToUi()
     {
@@ -307,7 +331,7 @@ public partial class MainWindow : Window
         {
         CollectUi();
         Directory.CreateDirectory(Path.Combine(root, "out"));
-        File.WriteAllText(statePath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+        WriteSafely(statePath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
         if (!string.IsNullOrWhiteSpace(state.GamePath))
             File.WriteAllText(Path.Combine(root, "out", "game_dir.txt"), state.GamePath);
 
@@ -351,7 +375,7 @@ public partial class MainWindow : Window
         }
         catch (Exception error)
         {
-            FooterMessage.Text = "No se pudieron guardar las opciones: " + error.Message;
+            FooterMessage.Text = "Could not save settings: " + error.Message;
             OnlineStatus.Text = FooterMessage.Text;
             return false;
         }
@@ -376,7 +400,17 @@ public partial class MainWindow : Window
         if (lines.Count == 0) lines.Add("# bbport settings - Bloodborne PC Launcher");
         foreach (var kv in values)
             if (!written.Contains(kv.Key)) lines.Add(kv.Key + "=" + kv.Value);
-        File.WriteAllText(path, string.Join("\r\n", lines) + "\r\n");
+        WriteSafely(path, string.Join("\r\n", lines) + "\r\n");
+    }
+
+    // Write beside the target and swap it in, so a crash mid-save never truncates the file;
+    // the previous version is kept as .bak.
+    static void WriteSafely(string path, string text)
+    {
+        string temp = path + ".tmp";
+        File.WriteAllText(temp, text);
+        if (File.Exists(path)) File.Replace(temp, path, path + ".bak");
+        else File.Move(temp, path);
     }
 
     void RefreshStatus()
@@ -433,6 +467,8 @@ public partial class MainWindow : Window
         catch { return "Dump found · version unknown"; }
     }
 
+    bool gpuDetected;
+
     async void DetectGpu()
     {
         string caps = Path.Combine(root, "out", "bb-gpu-capabilities.exe");
@@ -442,6 +478,9 @@ public partial class MainWindow : Window
             FooterGpu.Text = "   |   GPU unknown";
             return;
         }
+        // The GPU cannot change while the launcher is open: probe Vulkan once per session.
+        if (gpuDetected) return;
+        gpuDetected = true;
         try
         {
             var psi = new ProcessStartInfo(caps, "--live-resolution")
@@ -472,7 +511,7 @@ public partial class MainWindow : Window
 
     void LoadHeroImage()
     {
-        HeroImage.Source = new BitmapImage(new Uri("pack://application:,,,/BloodborneLauncher;component/Assets/hunter-background.png"));
+        HeroImage.Source = new BitmapImage(new Uri("pack://application:,,,/BloodborneLauncher;component/Assets/hunter-background.jpg"));
         string game = PathBox.Text.Trim();
         string[] candidates =
         {
@@ -575,7 +614,7 @@ public partial class MainWindow : Window
             };
             gameRunning=true;
             PlayButton.IsEnabled=false;
-            if(!gameProcess.Start()) throw new InvalidOperationException("No se pudo iniciar el juego.");
+            if(!gameProcess.Start()) throw new InvalidOperationException("Could not start the game.");
             FooterMessage.Text = $"Started · log: {Path.GetFileName(logPath)}";
             Hide();
         }

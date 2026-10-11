@@ -39,7 +39,7 @@ public partial class MainWindow
                 var stored=string.IsNullOrEmpty(secret) ? null : JsonSerializer.Deserialize<string[]>(secret);
                 if (stored?.Length==2) { OnlinePasswordBox.Password=stored[0]; OnlineTokenBox.Password=stored[1]; }
             }
-            catch (Exception) { OnlineStatus.Text="Introduce de nuevo la contraseña de esta cuenta."; }
+            catch (Exception) { OnlineStatus.Text="Enter the password for this account again."; }
     }
     void CollectOnlineUi()
     {
@@ -59,7 +59,7 @@ public partial class MainWindow
             ["online_p2p_port"]=state.OnlineP2pPort, ["online_remember"]=state.OnlineRemember?"1":"0",
             ["online_game_api"]=state.OnlineGameApi, ["online_website"]=state.OnlineWebsite,
             ["online_username"]=state.OnlineUsername };
-        if (values.Values.Any(v=>v.Any(char.IsControl))) throw new IOException("La configuración online contiene caracteres no válidos.");
+        if (values.Values.Any(v=>v.Any(char.IsControl))) throw new IOException("The online settings contain invalid characters.");
         OnlineProfile.P2pPort(state.OnlineP2pPort);
         RewriteIni(Path.Combine(root,"bbport.ini"),values);
         if (state.OnlineRemember && OnlinePasswordBox.Password.Length>0)
@@ -77,7 +77,7 @@ public partial class MainWindow
             OnlineProfile.P2pPort(state.OnlineP2pPort);
             if (Encoding.UTF8.GetByteCount(state.OnlineUsername) is <1 or >16 || state.OnlineUsername.Any(c=>char.IsWhiteSpace(c)||char.IsControl(c)) ||
                 OnlinePasswordBox.Password.Length is <1 or >4096 || OnlineTokenBox.Password.Length>4096)
-                throw new IOException("Introduce tu nombre de cuenta shadNet (hasta 16 bytes en UTF-8) y su contraseña.");
+                throw new IOException("Enter your shadNet account name (up to 16 bytes in UTF-8) and its password.");
             return true;
         }
         catch(Exception e) { MessageBox.Show(e.Message,"Online",MessageBoxButton.OK,MessageBoxImage.Warning);return false; }
@@ -98,7 +98,7 @@ public partial class MainWindow
     }
     async void OnlineProbe_Click(object sender,RoutedEventArgs e)
     {
-        CollectOnlineUi(); OnlineProbeButton.IsEnabled=false;OnlineStatus.Text="Comprobando conexión y rutas del juego…";
+        CollectOnlineUi(); OnlineProbeButton.IsEnabled=false;OnlineStatus.Text="Checking the connection and game routes…";
         try { OnlineStatus.Text=await CurrentOnlineProfile().ProbeAsync(); }
         catch(Exception error) { OnlineStatus.Text=error.Message; }
         finally { OnlineProbeButton.IsEnabled=true; }
@@ -107,7 +107,7 @@ public partial class MainWindow
     {
         try
         {
-            string url=OnlineProfile.HttpBase(OnlineWebsiteBox.Text,"Página de cuentas");
+            string url=OnlineProfile.HttpBase(OnlineWebsiteBox.Text,"Account website");
             Process.Start(new ProcessStartInfo(url){UseShellExecute=true});
         }
         catch(Exception error) { OnlineStatus.Text=error.Message; }

@@ -65,6 +65,7 @@ static class Program
         window = new MainWindow { ShowInTaskbar=false, ShowActivated=false, WindowStartupLocation=WindowStartupLocation.Manual, Left=-20000, Top=-20000 };
         window.Show(); Pump();
         Check(!Get<Button>("PlayButton").IsEnabled, "Play must be disabled without a dump");
+        Check(Get<TextBox>("PathBox").Text==Path.Combine(root,"CUSA03173"),"Default game folder next to the launcher");
         Check(Get<TextBlock>("RuntimeStatus").Text=="Not built","Missing runtime status");
         Check(Get<TextBlock>("DlssStatus").Text=="Model DLL not installed","Missing DLSS status");
         Check(Get<TextBlock>("Fsr4Status").Text=="Assets not installed","Missing FSR4 status");
@@ -137,6 +138,7 @@ static class Program
             Check(!json.RootElement.GetProperty("ModsEnabled").GetBoolean(),"JSON mods");
         }
         Check(File.ReadAllText(Path.Combine(root,"out","game_dir.txt"))==game,"Remembered path");
+        Check(File.ReadAllText(Path.Combine(root,"bbport.ini.bak")).Contains("# keep this comment"),"INI save keeps the previous version");
         Call("Play_Click", Get<Button>("PlayButton"),new RoutedEventArgs());
         Call("Play_Click", Get<Button>("PlayButton"),new RoutedEventArgs());
         var envPath=Path.Combine(root,"launch-env.txt");
@@ -193,6 +195,12 @@ static class Program
                 Check(migrated.RootElement.GetProperty("Fps").GetString()=="60","Persist FPS migration "+legacy);
             File.WriteAllText(Path.Combine(root,"launcher-settings.json"),saved);
         }
+        string goodSettings=File.ReadAllText(Path.Combine(root,"launcher-settings.json"));
+        File.WriteAllText(Path.Combine(root,"launcher-settings.json"),"{ damaged");
+        Call("LoadState"); Call("ApplyStateToUi");
+        Check(Get<TextBox>("PathBox").Text==game && Get<TextBlock>("FooterMessage").Text.Contains("backup"),"Damaged settings load the backup");
+        File.WriteAllText(Path.Combine(root,"launcher-settings.json"),goodSettings);
+        Call("LoadState"); Call("ApplyStateToUi");
         Check(Get<CheckBox>("ChangeAppearanceCheck").IsChecked==true,"Mirror option reload");
         string mirrorIni=File.ReadAllText(Path.Combine(root,"bbport.ini"));
         File.WriteAllText(Path.Combine(root,"bbport.ini"),mirrorIni.Replace("change_appearance=1","change_appearance=0"));

@@ -28,8 +28,8 @@ internal static class OnlineCredentials
             bool ok = encrypt ? CryptProtectData(ref source, "Bloodborne shadNet", IntPtr.Zero, IntPtr.Zero,
                 IntPtr.Zero, 1, out result) : CryptUnprotectData(ref source, IntPtr.Zero, IntPtr.Zero,
                 IntPtr.Zero, IntPtr.Zero, 1, out result);
-            if (!ok) throw new IOException("Windows no pudo proteger o leer la cuenta guardada.");
-            if (result.Size < 0 || result.Size > 65536) throw new IOException("Cuenta guardada no válida.");
+            if (!ok) throw new IOException("Windows could not protect or read the saved account.");
+            if (result.Size < 0 || result.Size > 65536) throw new IOException("Saved account is not valid.");
             byte[] output = new byte[result.Size];
             Marshal.Copy(result.Data, output, 0, output.Length);
             return output;
@@ -63,7 +63,7 @@ internal static class OnlineCredentials
     {
         string path = PathFor(root, identity);
         if (!File.Exists(path)) return "";
-        if (new FileInfo(path).Length > 65536) throw new IOException("Cuenta guardada no válida.");
+        if (new FileInfo(path).Length > 65536) throw new IOException("Saved account is not valid.");
         byte[] plain = Transform(File.ReadAllBytes(path), false);
         try { return Encoding.UTF8.GetString(plain); }
         finally { CryptographicOperations.ZeroMemory(plain); }

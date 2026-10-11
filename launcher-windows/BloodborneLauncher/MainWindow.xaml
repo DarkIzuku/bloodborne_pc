@@ -119,7 +119,7 @@
                     </Grid>
                 </Border>
                 <Grid Grid.Column="1" ClipToBounds="True">
-                    <Image x:Name="HeroImage" Source="Assets/hunter-background.png" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" IsHitTestVisible="False" />
+                    <Image x:Name="HeroImage" Source="Assets/hunter-background.jpg" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality" IsHitTestVisible="False" />
                     <Rectangle IsHitTestVisible="False">
                         <Rectangle.Fill>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
@@ -376,7 +376,7 @@
                                             <ComboBoxItem Content="FIFO Relaxed" Tag="FifoRelaxed" />
                                             <ComboBoxItem Content="Immediate (tearing)" Tag="Immediate" />
                                         </ComboBox>
-                                        <CheckBox x:Name="WidescreenCheck" Content="Widescreen: cámara y HUD con proporciones correctas (21:9 / 32:9)" Margin="0,0,0,10" />
+                                        <CheckBox x:Name="WidescreenCheck" Content="Widescreen: correct camera and HUD proportions (21:9 / 32:9)" Margin="0,0,0,10" />
                                         <CheckBox x:Name="FullscreenCheck" Content="Borderless fullscreen" />
                                         <CheckBox x:Name="ShowFpsCheck" Content="Show FPS counter" />
                                     </StackPanel>
@@ -456,8 +456,8 @@
                     <!-- CONTROLLER -->
                     <ScrollViewer x:Name="ControllerPage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel Margin="34,30" MaxWidth="1050" HorizontalAlignment="Stretch">
-                            <TextBlock Text="Controles" FontFamily="Georgia" FontSize="32" />
-                            <TextBlock Text="Teclado, ratón y mando. También puedes cambiar las teclas desde System → Key Bindings." Foreground="#B0A89C" Margin="0,4,0,24" />
+                            <TextBlock Text="Controls" FontFamily="Georgia" FontSize="32" />
+                            <TextBlock Text="Keyboard, mouse and gamepad. You can also change keys in-game under System → Key Bindings." Foreground="#B0A89C" Margin="0,4,0,24" />
                             <Border Style="{StaticResource CardStyle}">
                                 <StackPanel>
                                     <TextBlock Style="{StaticResource SectionTitle}" Text="ACTIVE CONTROLLER" />
@@ -473,23 +473,23 @@
 
                             <Border Style="{StaticResource CardStyle}" Margin="0,18,0,18">
                                 <StackPanel>
-                                    <TextBlock Text="TECLADO Y RATÓN" Style="{StaticResource SectionTitle}" />
-                                    <CheckBox x:Name="PcControlsCheck" Content="Controles de PC de bbhost (desactivar = controles anteriores)" />
-                                    <CheckBox x:Name="MouseCameraCheck" Content="Cámara de ratón" Margin="0,10,0,0" />
-                                    <CheckBox x:Name="MouseMenuCheck" Content="Seleccionar menús con el ratón" Margin="0,10,0,0" />
-                                    <TextBlock Text="Sensibilidad del ratón (0–10)" Margin="0,16,0,6" />
+                                    <TextBlock Text="KEYBOARD AND MOUSE" Style="{StaticResource SectionTitle}" />
+                                    <CheckBox x:Name="PcControlsCheck" Content="bbhost PC controls (off = previous controls)" />
+                                    <CheckBox x:Name="MouseCameraCheck" Content="Mouse camera" Margin="0,10,0,0" />
+                                    <CheckBox x:Name="MouseMenuCheck" Content="Select menus with the mouse" Margin="0,10,0,0" />
+                                    <TextBlock Text="Mouse sensitivity (0–10)" Margin="0,16,0,6" />
                                     <Slider x:Name="MouseSensitivitySlider" Minimum="0" Maximum="10" TickFrequency="1" IsSnapToTickEnabled="True" TickPlacement="BottomRight" />
                                     <TextBlock Text="{Binding ElementName=MouseSensitivitySlider,Path=Value,StringFormat={}{0:0}}" HorizontalAlignment="Center" />
-                                    <CheckBox x:Name="MouseInvertXCheck" Content="Invertir eje horizontal" Margin="0,10,0,0" />
-                                    <CheckBox x:Name="MouseInvertYCheck" Content="Invertir eje vertical" Margin="0,10,0,0" />
-                                    <CheckBox x:Name="MouseAutoRotationCheck" Content="Rotación automática de cámara al moverse" Margin="0,10,0,0" />
-                                    <TextBlock Text="WASD: moverse · Alt: caminar · Espacio: esquivar/correr · Q: fijar objetivo. Ratón izquierdo: ataque · Mayús + ataque: ataque fuerte · derecho: disparo · central: transformar arma." Foreground="#B0A89C" Margin="0,14,0,0" TextWrapping="Wrap" />
+                                    <CheckBox x:Name="MouseInvertXCheck" Content="Invert horizontal axis" Margin="0,10,0,0" />
+                                    <CheckBox x:Name="MouseInvertYCheck" Content="Invert vertical axis" Margin="0,10,0,0" />
+                                    <CheckBox x:Name="MouseAutoRotationCheck" Content="Automatic camera rotation while moving" Margin="0,10,0,0" />
+                                    <TextBlock Text="WASD: move · Alt: walk · Space: dodge/run · Q: lock on. Left mouse: attack · Shift + attack: strong attack · right: fire · middle: transform weapon." Foreground="#B0A89C" Margin="0,14,0,0" TextWrapping="Wrap" />
                                 </StackPanel>
                             </Border>
                             <Border Style="{StaticResource CardStyle}">
                                 <StackPanel>
-                                    <TextBlock Text="ASIGNACIÓN DE TECLAS" Style="{StaticResource SectionTitle}" />
-                                    <TextBlock Text="Edita la columna de asignación. Puedes usar una tecla y un botón, por ejemplo: E, Mouse1. Mouse1–5, WheelUp, WheelDown; none para desactivar. Dentro del juego puedes pulsar directamente la tecla en Key Bindings." Foreground="#B0A89C" TextWrapping="Wrap" Margin="0,0,0,12" />
+                                    <TextBlock Text="KEY BINDINGS" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Edit the Binding column. You can combine a key and a button, for example: E, Mouse1. Mouse1–5, WheelUp, WheelDown; none to disable. In-game you can press the key directly under Key Bindings." Foreground="#B0A89C" TextWrapping="Wrap" Margin="0,0,0,12" />
                                     <DataGrid x:Name="KeyBindingsGrid" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" CanUserSortColumns="False" HeadersVisibility="Column" Height="410" RowBackground="#161C1F" AlternatingRowBackground="#20282C" Foreground="#E8E0D6" Background="#0C1011" BorderBrush="#6B5B45" GridLinesVisibility="None" SelectionUnit="Cell">
                                         <DataGrid.ColumnHeaderStyle>
                                             <Style TargetType="DataGridColumnHeader">
@@ -497,11 +497,11 @@
                                             </Style>
                                         </DataGrid.ColumnHeaderStyle>
                                         <DataGrid.Columns>
-                                            <DataGridTextColumn Header="Acción" Binding="{Binding Action}" IsReadOnly="True" Width="*" />
-                                            <DataGridTextColumn Header="Asignación" Binding="{Binding Binding,UpdateSourceTrigger=PropertyChanged}" Width="220" />
+                                            <DataGridTextColumn Header="Action" Binding="{Binding Action}" IsReadOnly="True" Width="*" />
+                                            <DataGridTextColumn Header="Binding" Binding="{Binding Binding,UpdateSourceTrigger=PropertyChanged}" Width="220" />
                                         </DataGrid.Columns>
                                     </DataGrid>
-                                    <Button Content="Restaurar teclas predeterminadas" Click="ResetKeys_Click" Margin="0,14,0,0" HorizontalAlignment="Left" />
+                                    <Button Content="Restore default keys" Click="ResetKeys_Click" Margin="0,14,0,0" HorizontalAlignment="Left" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -510,36 +510,36 @@
                     <ScrollViewer x:Name="OnlinePage" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
                         <StackPanel MaxWidth="1040" Margin="36,28,36,28" HorizontalAlignment="Stretch">
                             <TextBlock Text="ONLINE" FontSize="28" FontFamily="Georgia" />
-                            <TextBlock Text="Configura tu servidor shadNet y entra con la cuenta creada en su página." Foreground="#B0A89C" Margin="0,4,0,24" TextWrapping="Wrap" />
+                            <TextBlock Text="Set up your shadNet server and sign in with the account created on its website." Foreground="#B0A89C" Margin="0,4,0,24" TextWrapping="Wrap" />
                             <Border Style="{StaticResource CardStyle}">
                                 <StackPanel>
-                                    <TextBlock Text="CONEXIÓN" Style="{StaticResource SectionTitle}" />
-                                    <CheckBox x:Name="OnlineEnabledCheck" Content="Jugar online con shadNet" />
-                                    <CheckBox x:Name="OnlineConnectedCheck" Content="Red conectada para el juego" IsChecked="True" Margin="0,10,0,16" />
+                                    <TextBlock Text="CONNECTION" Style="{StaticResource SectionTitle}" />
+                                    <CheckBox x:Name="OnlineEnabledCheck" Content="Play online with shadNet" />
+                                    <CheckBox x:Name="OnlineConnectedCheck" Content="Network connected for the game" IsChecked="True" Margin="0,10,0,16" />
                                     <UniformGrid Columns="2">
-                                        <StackPanel Margin="0,0,12,12"><TextBlock Text="IP o nombre del servidor" /><TextBox x:Name="OnlineHostBox" AutomationProperties.Name="shadNet server" Margin="0,6,0,0" /></StackPanel>
-                                        <StackPanel Margin="0,0,0,12"><TextBlock Text="Puerto TCP de shadNet" /><TextBox x:Name="OnlinePortBox" AutomationProperties.Name="shadNet TCP port" Margin="0,6,0,0" /></StackPanel>
+                                        <StackPanel Margin="0,0,12,12"><TextBlock Text="Server IP or name" /><TextBox x:Name="OnlineHostBox" AutomationProperties.Name="shadNet server" Margin="0,6,0,0" /></StackPanel>
+                                        <StackPanel Margin="0,0,0,12"><TextBlock Text="shadNet TCP port" /><TextBox x:Name="OnlinePortBox" AutomationProperties.Name="shadNet TCP port" Margin="0,6,0,0" /></StackPanel>
                                     </UniformGrid>
-                                    <TextBlock Text="URL de WebAPI (incluye el puerto)" /><TextBox x:Name="OnlineWebApiBox" AutomationProperties.Name="shadNet WebAPI URL" Margin="0,6,0,12" />
-                                    <TextBlock Text="API del juego (vacío = la misma WebAPI)" /><TextBox x:Name="OnlineGameApiBox" AutomationProperties.Name="Bloodborne game API URL" Margin="0,6,0,12" />
-                                    <TextBlock Text="Página de cuentas / registro" /><TextBox x:Name="OnlineWebsiteBox" AutomationProperties.Name="Account website" Margin="0,6,0,12" />
-                                    <CheckBox x:Name="OnlineUpnpCheck" Content="UPnP para conexiones entre jugadores" />
-                                    <TextBlock Text="Puerto UDP P2P local (vacío = automático)" Margin="0,12,0,0" /><TextBox x:Name="OnlineP2pPortBox" AutomationProperties.Name="Local P2P UDP port" Margin="0,6,0,0" />
-                                    <TextBlock Text="La redirección del juego se prepara automáticamente. No tienes que editar host_overrides.json. Las direcciones se guardan solo en tu configuración local." Foreground="#9CA3A9" TextWrapping="Wrap" Margin="0,12,0,0" />
+                                    <TextBlock Text="WebAPI URL (include the port)" /><TextBox x:Name="OnlineWebApiBox" AutomationProperties.Name="shadNet WebAPI URL" Margin="0,6,0,12" />
+                                    <TextBlock Text="Game API (empty = same WebAPI)" /><TextBox x:Name="OnlineGameApiBox" AutomationProperties.Name="Bloodborne game API URL" Margin="0,6,0,12" />
+                                    <TextBlock Text="Account / sign-up website" /><TextBox x:Name="OnlineWebsiteBox" AutomationProperties.Name="Account website" Margin="0,6,0,12" />
+                                    <CheckBox x:Name="OnlineUpnpCheck" Content="UPnP for player-to-player connections" />
+                                    <TextBlock Text="Local P2P UDP port (empty = automatic)" Margin="0,12,0,0" /><TextBox x:Name="OnlineP2pPortBox" AutomationProperties.Name="Local P2P UDP port" Margin="0,6,0,0" />
+                                    <TextBlock Text="Game redirection is set up automatically; you do not need to edit host_overrides.json. Addresses are saved only in your local settings." Foreground="#9CA3A9" TextWrapping="Wrap" Margin="0,12,0,0" />
                                 </StackPanel>
                             </Border>
                             <Border Style="{StaticResource CardStyle}">
                                 <StackPanel>
-                                    <TextBlock Text="CUENTA" Style="{StaticResource SectionTitle}" />
-                                    <TextBlock Text="Nombre de cuenta shadNet" /><TextBox x:Name="OnlineUsernameBox" AutomationProperties.Name="shadNet username" MaxLength="16" Margin="0,6,0,12" />
-                                    <TextBlock Text="Contraseña" /><PasswordBox x:Name="OnlinePasswordBox" AutomationProperties.Name="shadNet password" Background="#0C1011" Foreground="#E8E0D6" BorderBrush="#6B5B45" Padding="12" Margin="0,6,0,12" />
-                                    <TextBlock Text="Token de validación (solo si el servidor lo pide)" /><PasswordBox x:Name="OnlineTokenBox" AutomationProperties.Name="Account validation token" Background="#0C1011" Foreground="#E8E0D6" BorderBrush="#6B5B45" Padding="12" Margin="0,6,0,12" />
-                                    <CheckBox x:Name="OnlineRememberCheck" Content="Recordar la cuenta de forma protegida en este Windows" />
+                                    <TextBlock Text="ACCOUNT" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="shadNet account name" /><TextBox x:Name="OnlineUsernameBox" AutomationProperties.Name="shadNet username" MaxLength="16" Margin="0,6,0,12" />
+                                    <TextBlock Text="Password" /><PasswordBox x:Name="OnlinePasswordBox" AutomationProperties.Name="shadNet password" Background="#0C1011" Foreground="#E8E0D6" BorderBrush="#6B5B45" Padding="12" Margin="0,6,0,12" />
+                                    <TextBlock Text="Validation token (only if the server asks for it)" /><PasswordBox x:Name="OnlineTokenBox" AutomationProperties.Name="Account validation token" Background="#0C1011" Foreground="#E8E0D6" BorderBrush="#6B5B45" Padding="12" Margin="0,6,0,12" />
+                                    <CheckBox x:Name="OnlineRememberCheck" Content="Remember the account (protected by Windows)" />
                                     <WrapPanel Margin="0,16,0,0">
-                                        <Button x:Name="OnlineProbeButton" Content="Comprobar servidor" Click="OnlineProbe_Click" Margin="0,0,12,8" />
-                                        <Button Content="Abrir página / crear cuenta" Click="OnlineWebsite_Click" Margin="0,0,0,8" />
+                                        <Button x:Name="OnlineProbeButton" Content="Check server" Click="OnlineProbe_Click" Margin="0,0,12,8" />
+                                        <Button Content="Open website / create account" Click="OnlineWebsite_Click" Margin="0,0,0,8" />
                                     </WrapPanel>
-                                    <TextBlock x:Name="OnlineStatus" Text="Introduce las direcciones, guarda las opciones y pulsa PLAY. La conexión dentro del juego y el multijugador se comprueban por separado." Foreground="#B9C2C7" TextWrapping="Wrap" Margin="0,12,0,0" />
+                                    <TextBlock x:Name="OnlineStatus" Text="Enter the addresses, save the settings and press PLAY. The in-game connection and multiplayer are checked separately." Foreground="#B9C2C7" TextWrapping="Wrap" Margin="0,12,0,0" />
                                 </StackPanel>
                             </Border>
                         </StackPanel>

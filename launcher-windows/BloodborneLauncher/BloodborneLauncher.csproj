@@ -8,9 +8,12 @@
     <AssemblyName>BloodborneLauncher</AssemblyName>
     <RootNamespace>BloodborneLauncher</RootNamespace>
     <ApplicationIcon>Assets/bloodborne.ico</ApplicationIcon>
+    <!-- Only affects single-file publishes: the bundled .NET runtime is compressed. -->
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
   <ItemGroup>
     <Resource Include="Assets/*.png" />
+    <Resource Include="Assets/*.jpg" />
     <Resource Include="Assets/bloodborne.ico" />
   </ItemGroup>
 </Project>
