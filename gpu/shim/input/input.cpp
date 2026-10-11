@@ -18,6 +18,7 @@
 
 namespace {
 std::atomic<bool> active{false},relative{false},wanted_relative{false},text_open{false},focused{true};
+bool pad_hidden=false; // the window thread's (Pump)
 std::atomic<InputDevice> device{InputDevice::KeyboardMouse};
 std::mutex state_lock;
 PadState snapshot;
@@ -134,6 +135,10 @@ void Pump(SDL_Window* w,bool editing) {
             mouse_camera::g_flick_counts=0;mouse_camera::g_flick_updates=0;
             if(want)SDL_HideCursor();else SDL_ShowCursor();}
     }
+    // A gamepad in use hides the menu cursor until the mouse moves (device back to KeyboardMouse).
+    const bool hide=!relative && device==InputDevice::Pad && !BbOverlay::MenuOpen();
+    if(relative)pad_hidden=false;
+    else if(hide!=pad_hidden){pad_hidden=hide;if(hide)SDL_HideCursor();else SDL_ShowCursor();}
 }
 }
 

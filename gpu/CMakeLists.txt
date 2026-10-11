@@ -194,9 +194,12 @@ target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui
     third_party/imgui/backends/imgui_impl_vulkan.cpp)
 target_include_directories(bbgpu PRIVATE third_party/imgui third_party/imgui/backends)
 target_compile_definitions(bbgpu PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES
-    BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf")
+    BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf"
+    BB_PROMPTS_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/button-prompts/xbox.bin")
 set_source_files_properties(shim/bbport_overlay.cpp PROPERTIES
     OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf)
+set_source_files_properties(shim/engine/button_prompts.cpp PROPERTIES
+    OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/third_party/button-prompts/xbox.bin)
 target_include_directories(bbgpu PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include)
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
@@ -314,6 +317,9 @@ add_executable(pc-input-test EXCLUDE_FROM_ALL ../tests/test_pc_input.cpp shim/in
 target_include_directories(pc-input-test PRIVATE shim)
 target_link_libraries(pc-input-test PRIVATE PkgConfig::SDL3)
 target_compile_options(pc-input-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+add_executable(button-prompts-test EXCLUDE_FROM_ALL ../tests/test_button_prompts.cpp)
+target_include_directories(button-prompts-test PRIVATE shim)
+target_compile_options(button-prompts-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 add_executable(widescreen-test EXCLUDE_FROM_ALL ../tests/test_widescreen.cpp
     shim/engine/widescreen.cpp shim/engine/engine_hooks.cpp shim/bbport_settings.cpp)
 target_include_directories(widescreen-test PRIVATE shim)

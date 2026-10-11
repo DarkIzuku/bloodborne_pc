@@ -6,6 +6,7 @@
 
 #include "bbport_toggles.h"
 #include "bbport_free_check.h"
+#include "engine/button_prompts.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/div_ceil.h"
@@ -978,8 +979,14 @@ void TextureCache::RefreshImage(Image& image) {
 
     scheduler.EndRendering();
 
-    const auto [in_buffer, in_offset] =
+    auto [in_buffer, in_offset] =
         buffer_cache.ObtainBufferForImage(image.info.guest_address, image.info.guest_size);
+    // bbport: the button prompts of the device in use, in place of the game's (engine/button_prompts.h).
+    if (const u8* prompts = BbPrompts::Replace(image.info.guest_address, image.info.guest_size)) {
+        auto& stream = buffer_cache.GetStreamBuffer();
+        in_offset = stream.Copy(prompts, image.info.guest_size, instance.StorageMinAlignment());
+        in_buffer = &stream;
+    }
     const auto [buffer, offset] = tile_manager.DetileImage(in_buffer, in_offset, image.info);
     for (auto& copy : image_copies) {
         copy.bufferOffset += offset;
