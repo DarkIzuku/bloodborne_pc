@@ -17,5 +17,5 @@ for path in files:
     assert not re.search(r'(seamless|steam_api|steam_appid|respawn_patch|\.dmp$|\.sl2$|eboot\.(bin|elf)|boot-linked\.bin|host_overrides\.json|bbport\.ini)',name,re.I), 'Unexpected package file: '+name
     if path.suffix.lower() in ('.py','.json','.md','.txt','.bat','.ps1','.sh'):
         assert not re.search(rb'(BB_SEAMLESS|bloodborne_pc_private|seamless_coop|respawn_delay_fix)',path.read_bytes(),re.I),name
-assert len(list((root/'fsr4_shaders').rglob('*')))>180,'Missing FSR assets'
+assert sum(path.is_file() for path in (root/'fsr4_shaders').rglob('*'))>=180,'Missing FSR assets'
 print('PASS: portable public package complete; no private modules, game content, saves or local configuration')

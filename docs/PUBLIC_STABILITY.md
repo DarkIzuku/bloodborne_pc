@@ -28,6 +28,8 @@ Changes are ported individually, without replacing the renderer or launcher.
   validation. Executable/module/preparation changes invalidate the cache. Mods,
   selected XML patches and local engine assets are processed on every launch.
   `BB_PREPARE_CACHE=0` forces rebuilding. No game-derived cache is distributed.
+* SDL controller discovery retains explicit user overrides, retries initialization
+  and preserves a working controller when a replacement cannot be opened.
 * Public PR #1 adds Quit Game to the title menu using the original confirmation
   dialog. PR #2 adds local trophies, a notification banner, a native System page
   and an overlay list. Unlocks persist in the runtime user directory's

@@ -54,7 +54,11 @@ with tempfile.TemporaryDirectory(prefix='bbport-crash-test-') as directory:
     thread_count = struct.unpack_from('<I', data, thread_rva)[0]
     normal_thread_ids = {struct.unpack_from('<I', data, thread_rva+4+i*48)[0] for i in range(thread_count)}
     assert struct.unpack_from('<I', data, exception_rva)[0] in normal_thread_ids
-    assert address == 0x800000002, hex(address)
+    # The loader first attempts its low guest range, but its documented Windows
+    # fallback can relocate this CPU-only image around loaded DLLs. Validate the
+    # actual faulting code rather than assuming one virtual address.
+    assert memory_at(data, streams, address-2, 9) == bytes.fromhex('31c0c70001000000c3'), hex(address)
+    assert 'at guest+0x2, writing address' in result.stderr
     assert 'Crash dump:' in result.stderr
     print('PASS: original exception, threads, modules and Unicode dump path')
     # Diagnostics must preserve exit 139 even when disabled or unable to create the file.
