@@ -139,9 +139,10 @@ def main():
                        '--enabled', os.environ.get('BB_MODS_ENABLED', '1')], capture=True))
     overlay = merged if merged.resolve() != original else None
     try:
-        for script, extra in (('prepare.py', []), ('link_libc.py', []), ('link_modules.py', []),
-                              ('content_profile.py', ['--sku', os.environ.get('BB_CONTENT_SKU', 'full')])):
-            run([PYTHON, SCRIPTS / script, merged, '--out', out, *extra])
+        from prepare_cache import prepare_game
+        prepare_game(merged, out, lambda script, *args: run([PYTHON, SCRIPTS / script, *args]))
+        run([PYTHON, SCRIPTS / 'content_profile.py', merged, '--out', out,
+             '--sku', os.environ.get('BB_CONTENT_SKU', 'full')])
         prebuilt = os.environ.get('BB_PREBUILT') == '1'
         if not prebuilt:
             build()

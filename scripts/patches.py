@@ -9,6 +9,7 @@ import json
 import os
 import struct
 import sys
+from render_pools import render_pool_writes
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -310,6 +311,9 @@ def main():
         # After the built-in ones: an external patch of the same bytes wins.
         writes+=compile_external(external_selection(external_patches(a.patches_dir,a.app_version,a.xml),
                                                     a.patches_config),segments)
+    writes += render_pool_writes((a.out/'eboot.elf').read_bytes(), writes)
+    from redzone import patch_conflicts
+    writes = patch_conflicts(writes, a.out/'boot-linked.bin')
     # BBPATCH2: the patch base, so the loader can rebase pointers the patches write into
     # relocated slots (60/90 FPS++ replace function pointers).
     blob=struct.pack('<8sQQ',b'BBPATCH2',EBOOT_BASE,len(writes))

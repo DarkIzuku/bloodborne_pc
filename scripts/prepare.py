@@ -126,7 +126,7 @@ class GameCheckError(Exception):
     """Game files bbport does not run (game_check.py)."""
 
 
-def prepare(game, out):
+def prepare(game, out, resource_inventory=True):
     source = (game / 'eboot.bin').read_bytes()
     elf, header, ph, segments, missing = parse_self(source)
     loads = [p for p in ph if p['type'] in (1, 0x61000010)]
@@ -232,7 +232,7 @@ def prepare(game, out):
     (out / 'entry.bin').write_bytes(image[:1024])
     resources = collections.Counter()
     total_bytes = 0
-    for path in (game / 'dvdroot_ps4').rglob('*'):
+    for path in ((game / 'dvdroot_ps4').rglob('*') if resource_inventory else ()):
         if path.is_file():
             resources[path.relative_to(game / 'dvdroot_ps4').parts[0]] += 1
             total_bytes += path.stat().st_size
@@ -244,7 +244,7 @@ def prepare(game, out):
                   import_name_hints={name: known[name.split('#')[0]] for name in names if name.split('#')[0] in known},
                   libc_evidence=libc_evidence,
                   bundled_modules=sorted(p.name for p in (game / 'sce_module').iterdir()),
-                  resources=dict(resources), resource_bytes=total_bytes,
+                  resources=dict(resources), resource_bytes=total_bytes, resource_inventory=resource_inventory,
                   status='Prepared only; execution and Vulkan are tested separately.')
     (out / 'analysis.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
     print(f"{report['sfo'].get('TITLE')} | entry={header[4]:#x} | image={size:,} bytes")
@@ -258,9 +258,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('game', type=Path)
     parser.add_argument('--out', type=Path, default=Path(__file__).resolve().parent.parent / 'out')
+    parser.add_argument('--no-resource-inventory', action='store_true')
     args = parser.parse_args()
     try:
-        prepare(args.game, args.out)
+        prepare(args.game, args.out, not args.no_resource_inventory)
     except GameCheckError as error:
         parser.exit(2, f'\nUnsupported game files: {error}\nSet BB_SKIP_GAME_CHECK=1 to start anyway.\n')
     except (ValueError, OSError, StopIteration, KeyError, IndexError) as error:

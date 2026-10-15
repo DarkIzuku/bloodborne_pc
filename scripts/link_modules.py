@@ -17,6 +17,7 @@ from pathlib import Path
 import struct
 from prepare import parse_self, span, unpack
 from link_libc import encode_id
+from redzone import protect_image
 
 DEFAULT_MODULES = ('libc.prx', 'libSceFios2.prx')
 FS_LOAD = bytes.fromhex('64488b042500000000')  # mov rax, fs:[0]
@@ -196,6 +197,14 @@ def link(game, out, module_names=DEFAULT_MODULES):
                           tls_relocations=tls_relocations, exports=count, sha256=m['sha256']))
         base = (base + modsize + 65535) & ~65535
 
+    # ELF identity stays original for native hooks/content tools. Redirect stores
+    # only for the same 1.09 executable those tools already validate.
+    from engine_assets import EBOOT_SHA
+    if hashlib.sha256(main['elf']).hexdigest() in EBOOT_SHA:
+        red_zone = protect_image(image, segments, relocs)
+    else:
+        red_zone = dict(enabled=False, sites=0, reason='unverified executable')
+
     bindings, unresolved = [], []
     for identity, index in identities.items():
         found = exports.get(identity)
@@ -235,6 +244,7 @@ def link(game, out, module_names=DEFAULT_MODULES):
         f.write(image)
     report = dict(modules=[{k: (hex(v) if k in ('base', 'init', 'tls_address') else v) for k, v in t.items()} for t in table],
                   bindings=len(bindings), imports=len(names), fs_loads_patched=fs_patched,
+                  red_zone=red_zone,
                   main_tls=dict(zip(('vaddr', 'filesz', 'memsz', 'align'), main_tls_values)),
                   unresolved_imports=unresolved)
     (out / 'link.json').write_text(json.dumps(report, indent=2) + '\n')
