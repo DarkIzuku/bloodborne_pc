@@ -104,7 +104,7 @@ public partial class MainWindow : Window
         {
             if (File.Exists(Path.Combine(dir.FullName, "run.bat")) &&
                 File.Exists(Path.Combine(dir.FullName, "build.sh")))
-                return dir.FullName;
+                return Path.TrimEndingDirectorySeparator(dir.FullName);
         }
         return AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
     }
