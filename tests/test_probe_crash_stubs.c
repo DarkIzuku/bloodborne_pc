@@ -33,3 +33,5 @@ int bbgpu_pc_input(BbPcPad *pad, const bool *keys, int count, int present) {
     (void)pad; (void)keys; (void)count; (void)present; unavailable(); return 0;
 }
 int vulkan_smoke(void) { unavailable(); return 1; }
+
+void bbgpu_trophy_popup(const char *name, int grade) { (void)name; (void)grade; unavailable(); }

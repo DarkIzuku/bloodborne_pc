@@ -2,6 +2,15 @@
 
 These are focused adaptations, not merges of either reference renderer.
 
+* AwesomeObserver/bloodborne_pc, branch `windows`: deferred recording ownership,
+  bounded crash diagnostics, independent NGX model hints and executable cache.
+  https://github.com/AwesomeObserver/bloodborne_pc/tree/windows
+* Gerasimos Kanellatos (GerasimosKan), public PRs #1 and #2: native Quit Game,
+  local trophies and asset-tool dependency setup. Adapted without the unrelated
+  launcher redesign. Original copyright and GPL notices are retained.
+  https://github.com/DarkIzuku/bloodborne_pc/pull/1
+  https://github.com/DarkIzuku/bloodborne_pc/pull/2
+
 * Awakenchan/BloodBorneButPc, `bf594531a6de33ef607fe9661073c09e3a7fa9ff`,
   `engine/bbhost-changes.patch`: game render scratch pools, tiled image writeback,
   collector lifetime observations, memory notification/remapping and allocation checks.
@@ -16,3 +25,4 @@ These are focused adaptations, not merges of either reference renderer.
 Existing shadPS4 code retains its GPL-2.0-or-later notices. New adaptations are
 GPL-3.0-or-later, compatible with that later-version grant; see GPL-3.0.txt.
 The byte-checked patch table contains isolated instruction sites, not a game
+executable. No original game files or saves are distributed.

@@ -1,6 +1,5 @@
 # Windows launcher redesign
 
-Based on `seamless-dev` at `d864807ed7359bc38c0c996388e0bd7c1c1c1b46`.
 All changes are contained in `launcher-windows/BloodborneLauncher/`.
 
 ## Presentation
@@ -68,4 +67,3 @@ pages/dropdown/compact previews.
 
 ## Integration
 
-Integrated into `seamless-dev` for the Windows offline test build.

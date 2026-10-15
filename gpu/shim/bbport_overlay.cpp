@@ -636,7 +636,7 @@ void Toast() {
         std::scoped_lock lock{toast_mutex};
         const auto now = std::chrono::steady_clock::now();
         age = std::chrono::duration<float>(now - toast_since).count();
-        if (age > seconds) {
+        if (age > seconds && !toasts.empty()) {
             toasts.pop_front();
             toast_since = now;
             age = 0.0f;

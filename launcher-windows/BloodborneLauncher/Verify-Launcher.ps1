@@ -51,6 +51,7 @@ static class Program
         var root = AppContext.BaseDirectory;
         string game = Path.Combine(root, "Test game");
         Directory.CreateDirectory(Path.Combine(game,"sce_sys"));
+        File.WriteAllText(Path.Combine(root,"build.sh"),"# isolated launcher fixture\n");
         File.WriteAllText(Path.Combine(game,"eboot.bin"),"launcher test fixture");
         File.WriteAllText(Path.Combine(game,"sce_sys","param.sfo"),"01.09");
         File.WriteAllText(Path.Combine(root,"run.bat"),"@echo off\r\nset BB_ > launch-env.txt\r\necho %* > launch-args.txt\r\necho session>>launch-count.txt\r\nping 127.0.0.1 -n 3 > nul\r\n");
@@ -248,6 +249,12 @@ static class Program
         Check(!File.Exists(protectedAccount),"Unchecking remember forgets account");
         Call("LoadState"); Call("ApplyStateToUi");
         Check(Get<PasswordBox>("OnlinePasswordBox").Password.Length==0,"Forgotten account is not restored");
+        foreach(var model in new[]{"Auto","A","B","C","D","E","F","J","K","M","L"}) {
+            Get<ComboBox>("DlssModelCombo").SelectedItem=Get<ComboBox>("DlssModelCombo").Items.Cast<ComboBoxItem>().First(item=>item.Tag?.ToString()==model);
+            Call("SaveSettings"); Call("LoadState"); Call("ApplyStateToUi");
+            Check(Tag("DlssModelCombo")==model,"DLSS model persists "+model);
+            Check(File.ReadAllText(Path.Combine(root,"bbport.ini")).Split('\n').Any(line=>line.Trim()=="dlss_preset="+model),"DLSS model INI "+model);
+        }
         Console.WriteLine($"PASS: {assertions} assertions; settings, navigation, all quick options, launch environment and artwork.");
         window.Close(); app.Shutdown();
     }
