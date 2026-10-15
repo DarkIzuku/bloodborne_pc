@@ -133,6 +133,7 @@ public partial class MainWindow : Window
         state.DlssModel = NormalizeDlssModel(ReadIniValue("dlss_preset") ?? state.DlssModel);
         // Normalize malformed frame-rate selections before displaying or launching.
         state.Fps = NormalizeFps(state.Fps);
+        if (RequiresVSync(state.Fps)) state.PresentMode = "Fifo";
         string? mirror = ReadIniValue("change_appearance");
         if (mirror != null) state.ChangeAppearance = mirror == "1";
         string? rebirth = ReadIniValue("rebirth");
@@ -160,6 +161,16 @@ public partial class MainWindow : Window
     }
 
     static string NormalizeFps(string? value) => value is "30" or "60" or "90" or "120" or "uncap" ? value : "60";
+    static bool RequiresVSync(string fps) => fps is "120" or "uncap";
+
+    void UpdatePresentModeAvailability()
+    {
+        bool required = RequiresVSync(NormalizeFps(ComboTag(FpsCombo, "60")));
+        if (required) SetComboTag(PresentCombo, "Fifo");
+        PresentCombo.IsEnabled = !required;
+        PresentCombo.ToolTip = required ? "120 FPS and Unlimited use FIFO (VSync)." : null;
+        ToolTipService.SetShowOnDisabled(PresentCombo, true);
+    }
 
     static string CameraScale(string? value, double min)
     {
@@ -229,6 +240,7 @@ public partial class MainWindow : Window
         QuickPreset.SelectedIndex = int.TryParse(state.Preset, out int p) ? Math.Clamp(p, 0, 4) : 1;
         SetComboTag(FpsCombo, state.Fps);
         SetQuickFps(state.Fps);
+        UpdatePresentModeAvailability();
 
         SetComboTag(LanguageCombo, state.Language);
         SetComboTag(LiveResolutionCombo, state.LiveResolution);
@@ -273,11 +285,12 @@ public partial class MainWindow : Window
         state.Resolution = ComboText(ResolutionCombo, "1920x1080");
         state.Fullscreen = FullscreenCheck.IsChecked == true;
         state.ShowFps = ShowFpsCheck.IsChecked == true;
-        state.PresentMode = ComboTag(PresentCombo);
         state.Upscaler = ComboTag(UpscalerCombo, "fsr3");
         state.Preset = ComboTag(PresetCombo, "1");
         state.DlssModel = NormalizeDlssModel(ComboTag(DlssModelCombo, "Auto"));
         state.Fps = NormalizeFps(ComboTag(FpsCombo, "60"));
+        UpdatePresentModeAvailability();
+        state.PresentMode = ComboTag(PresentCombo);
         state.Language = ComboTag(LanguageCombo, "1");
         state.LiveResolution = ComboTag(LiveResolutionCombo, "0");
         state.ModelLod = ComboTag(ModelLodCombo, "0");
