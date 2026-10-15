@@ -97,7 +97,7 @@ jobs:
           out/gpu/runtime-gamepad-test.exe
           out/gpu/pc-input-test.exe
           ninja -C out/gpu frame-pacing-test
-          out/gpu/frame-pacing-test.exe
+          ctest --test-dir out/gpu -R '^frame-pacing' --no-tests=error --output-on-failure
           out/gpu/widescreen-test.exe
 
       - name: Verify preparation, patches, and mod safety
