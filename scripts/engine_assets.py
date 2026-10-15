@@ -178,6 +178,10 @@ def prepare_menu_assets(game, elf_path, cache, tool, rebirth=False):
         raise ValueError('Native options require valid menu bundles for every installed language')
     if rebirth:
         sources.append((Path('dvdroot_ps4/script/talk/m24_02_00_00.talkesdbnd.dcx'), 'rebirth'))
+    # The title menu's movies get one more command line for Quit Game (bbhost menu_assets.cpp).
+    # EU dumps with the DLC load title_dlc_eu.gfx.
+    sources += [(Path('dvdroot_ps4/menu') / name, 'title') for name in ('title.gfx', 'title_dlc.gfx', 'title_dlc_eu.gfx')
+                if (game / 'dvdroot_ps4/menu' / name).is_file()]
     generator = sha(tool.read_bytes())
     manifest_path = root / 'manifest.json'
     try:
