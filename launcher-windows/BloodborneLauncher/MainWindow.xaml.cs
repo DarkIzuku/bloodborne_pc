@@ -22,6 +22,7 @@ public partial class MainWindow : Window
         public string PresentMode { get; set; } = "";
         public string Upscaler { get; set; } = "fsr3";
         public string Preset { get; set; } = "1";
+        public string DlssModel { get; set; } = "Auto";
         public string Fps { get; set; } = "60";
         public string Language { get; set; } = "1";
         public string LiveResolution { get; set; } = "0";
@@ -108,6 +109,14 @@ public partial class MainWindow : Window
         return AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
     }
 
+    static string NormalizeDlssModel(string value)
+    {
+        string name=value.Trim().ToUpperInvariant();
+        string[] names={"Auto","A","B","C","D","E","F","J","K","M","L"};
+        string[] values={"0","1","2","3","4","5","6","10","11","13","12"};
+        for(int i=0;i<names.Length;i++) if(name==names[i].ToUpperInvariant() || name==values[i]) return names[i];
+        return "Auto";
+    }
     void LoadState()
     {
         try
@@ -121,6 +130,7 @@ public partial class MainWindow : Window
             }
         }
         catch { state = new(); }
+        state.DlssModel = NormalizeDlssModel(ReadIniValue("dlss_preset") ?? state.DlssModel);
         // Migrate retired or malformed frame-rate selections before displaying or launching.
         state.Fps = NormalizeFps(state.Fps);
         string? mirror = ReadIniValue("change_appearance");
@@ -215,6 +225,7 @@ public partial class MainWindow : Window
         SetComboTag(UpscalerCombo, state.Upscaler);
         SetQuickUpscaler(state.Upscaler);
         SetComboTag(PresetCombo, state.Preset);
+        SetComboTag(DlssModelCombo, state.DlssModel);
         QuickPreset.SelectedIndex = int.TryParse(state.Preset, out int p) ? Math.Clamp(p, 0, 4) : 1;
         SetComboTag(FpsCombo, state.Fps);
         SetQuickFps(state.Fps);
@@ -265,6 +276,7 @@ public partial class MainWindow : Window
         state.PresentMode = ComboTag(PresentCombo);
         state.Upscaler = ComboTag(UpscalerCombo, "fsr3");
         state.Preset = ComboTag(PresetCombo, "1");
+        state.DlssModel = NormalizeDlssModel(ComboTag(DlssModelCombo, "Auto"));
         state.Fps = NormalizeFps(ComboTag(FpsCombo, "60"));
         state.Language = ComboTag(LanguageCombo, "1");
         state.LiveResolution = ComboTag(LiveResolutionCombo, "0");
@@ -315,6 +327,7 @@ public partial class MainWindow : Window
         {
             ["upscaler"] = state.Upscaler,
             ["preset"] = state.Preset,
+            ["dlss_preset"] = state.DlssModel,
             ["sharpen"] = state.Sharpen ? "1" : "0",
             ["show_fps"] = state.ShowFps ? "1" : "0",
             ["output_res"] = state.Resolution,
@@ -393,7 +406,7 @@ public partial class MainWindow : Window
             new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(117, 207, 121)) :
             new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(210, 107, 112));
         PathValidationText.Text = valid ? $"Game dump detected · {version}" : "Choose the folder containing eboot.bin and sce_sys.";
-        PlayButton.IsEnabled = valid;
+        PlayButton.IsEnabled = valid && !gameRunning;
         PlayHint.Text = valid ? "Ready. Settings are saved automatically when Play is pressed." : "Select a valid Bloodborne dump before playing.";
 
         string probe = Path.Combine(root, "out", "bb-probe.exe");
@@ -568,6 +581,7 @@ public partial class MainWindow : Window
                     WindowState = WindowState.Normal;
                     LoadState();
                     ApplyStateToUi();
+                    RefreshStatus();
                     Activate();
                     FooterMessage.Text = "Bloodborne closed";
                     gameProcess.Dispose();

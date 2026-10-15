@@ -401,6 +401,21 @@
                                             <ComboBoxItem Content="Performance" Tag="3" />
                                             <ComboBoxItem Content="Ultra Performance" Tag="4" />
                                         </ComboBox>
+                                        <TextBlock Text="DLSS Model Preset" />
+                                        <ComboBox x:Name="DlssModelCombo" AutomationProperties.Name="DLSS Model Preset" Margin="0,6,0,12"
+                                                  ToolTip="Independent of DLSS quality and DLAA. Auto keeps the default model. Older hints may be remapped by NVIDIA.">
+                                            <ComboBoxItem Content="Auto" Tag="Auto" />
+                                            <ComboBoxItem Content="A" Tag="A" />
+                                            <ComboBoxItem Content="B" Tag="B" />
+                                            <ComboBoxItem Content="C" Tag="C" />
+                                            <ComboBoxItem Content="D" Tag="D" />
+                                            <ComboBoxItem Content="E" Tag="E" />
+                                            <ComboBoxItem Content="F" Tag="F" />
+                                            <ComboBoxItem Content="J" Tag="J" />
+                                            <ComboBoxItem Content="K" Tag="K" />
+                                            <ComboBoxItem Content="M" Tag="M" />
+                                            <ComboBoxItem Content="L" Tag="L" />
+                                        </ComboBox>
                                         <CheckBox x:Name="SharpenCheck" Content="RCAS sharpening" />
                                         <TextBlock Text="Live resolution changes" Margin="0,12,0,6" />
                                         <ComboBox x:Name="LiveResolutionCombo" AutomationProperties.Name="Live resolution changes">

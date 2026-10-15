@@ -10,15 +10,21 @@ version=v310.9.1
 base="https://raw.githubusercontent.com/NVIDIA/DLSS/$version/lib"
 dest=${1:-out}
 mkdir -p "$dest"
+curl_client=curl
 case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) files=("Windows_x86_64/rel/nvngx_dlss.dll") ;;
+    MINGW*|MSYS*|CYGWIN*)
+        files=("Windows_x86_64/rel/nvngx_dlss.dll")
+        if [[ -n ${WINDIR:-} ]] && command -v cygpath >/dev/null; then
+            system_curl="$(cygpath -u "$WINDIR")/System32/curl.exe"
+            if [[ -x $system_curl ]]; then curl_client=$system_curl; fi
+        fi ;;
     *) files=("Linux_x86_64/rel/libnvidia-ngx-dlss.so.${version#v}") ;;
 esac
-curl -fsSL --retry 3 -o "$dest/LICENSE-DLSS-SDK.txt" "https://raw.githubusercontent.com/NVIDIA/DLSS/$version/LICENSE.txt"
+"$curl_client" -fsSL --retry 3 --connect-timeout 20 --max-time 180 -o "$dest/LICENSE-DLSS-SDK.txt" "https://raw.githubusercontent.com/NVIDIA/DLSS/$version/LICENSE.txt"
 for file in "${files[@]}"; do
     name=$(basename -- "$file")
     if [[ -s $dest/$name ]]; then echo "DLSS: $dest/$name present"; continue; fi
-    curl -fsSL --retry 3 -o "$dest/$name.part" "$base/$file"
+    "$curl_client" -fsSL --retry 3 --connect-timeout 20 --max-time 180 -o "$dest/$name.part" "$base/$file"
     mv "$dest/$name.part" "$dest/$name"
     echo "DLSS: downloaded $dest/$name"
 done

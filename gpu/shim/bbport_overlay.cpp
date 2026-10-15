@@ -316,6 +316,17 @@ void Menu() {
         ImGui::TextWrapped("TAA anti-aliases the scene at the output resolution, without an FSR "
                            "model or upscaling. The saved preset returns when an upscaler is selected.");
     }
+    if (s.upscaler == BbSettings::UpscalerDlss) {
+        const int model=s.dlss_preset.load();
+        if (ImGui::BeginCombo("DLSS Model Preset", BbSettings::DlssPresetName(model))) {
+            for (int choice:BbSettings::DlssPresets)
+                if (ImGui::Selectable(BbSettings::DlssPresetName(choice), choice==model))
+                    Store(s.dlss_preset, choice, true);
+            ImGui::EndCombo();
+        }
+        Hint("Independent of quality/DLAA. Auto preserves NVIDIA defaults. Legacy hints may "
+             "map to a newer model. Changes wait for GPU completion and reset history.");
+    }
     ImGui::Text("Active scene render: %d x %d", s.active_render_width.load(),
                 s.active_render_height.load());
     if (BbSettings::FixedRenderSession()) {
