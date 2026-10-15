@@ -20,11 +20,13 @@ extern std::uint32_t input_delivered_buttons();
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <filesystem>
 #include <vector>
 extern "C" int runtime_file_translate(const char*,char*,std::size_t);
 extern "C" int runtime_file_mount(const char*,const char*);
 extern "C" void runtime_file_unmount(const char*);
+extern "C" int runtime_trophy(int,const char**,const char**,int*,int*,std::int64_t*); // runtime_services.c
 namespace BbEngine::Options {
 namespace {
 #define GUEST_ABI __attribute__((sysv_abi))
@@ -370,20 +372,22 @@ void keys_fill(int page) {
 
 // Whether the remembered objects are still this screen's. The dialog is freed
 // when it closes and its memory reused, so identity is checked where only the
-// port could have put it: every action row writes through one of its bytes.
-bool keys_alive() {
-    if (!g_keys.dialog || !g_keys.rows) return false;
+// port could have put it: every row writes through one of its bytes.
+bool screen_alive(std::uint8_t* dialog, std::uint8_t* rows, std::uint8_t* const* widget, const std::uint8_t* value,
+                  int count) {
+    if (!dialog || !rows) return false;
     std::uint64_t vt = 0;
-    std::memcpy(&vt, g_keys.rows, sizeof(vt));
+    std::memcpy(&vt, rows, sizeof(vt));
     if (vt != guest(kListVTable) + 0x10 && vt != guest(kListVTable)) return false;
-    for (int r = 0; r < kKeysRows; ++r) {
-        if (!g_keys.widget[r]) return false;
+    for (int r = 0; r < count; ++r) {
+        if (!widget[r]) return false;
         std::uint64_t v = 0;
-        std::memcpy(&v, g_keys.widget[r] + kChoiceValue, sizeof(v));
-        if (v != reinterpret_cast<std::uint64_t>(&g_keys_value[r])) return false;
+        std::memcpy(&v, widget[r] + kChoiceValue, sizeof(v));
+        if (v != reinterpret_cast<std::uint64_t>(&value[r])) return false;
     }
     return true;
 }
+bool keys_alive() { return screen_alive(g_keys.dialog, g_keys.rows, g_keys.widget, g_keys_value, kKeysRows); }
 
 GUEST_ABI void pc_keys_handler(void* dialog, void* params) {
     host_log("pc-options: PCKeys opened, dialog=%p params=%p", dialog, params);
@@ -471,6 +475,114 @@ void keys_update(int row, bool focused) {
     if (values_changed) {
         for (int r = 0; r < kKeysRows; ++r) redraw(g_keys.widget[r] + kChoiceList);
     }
+}
+
+// Trophies (System > Trophies): Key Bindings' section and layout, read-only. Row 0 is
+// the page, rows 1..7 seven trophies in id order. A hidden trophy keeps its name and
+// description back until it is earned, as the PS4's list does. The list and what is
+// earned are runtime_services.c's (runtime_trophy).
+constexpr std::uint32_t kTrophyPageRow=125000,kTrophyFirstRow=125001;
+constexpr int kTrophyPerPage=7,kTrophyRows=1+kTrophyPerPage;
+std::uint8_t g_trophy_value[kTrophyRows];
+char16_t g_trophy_label[kTrophyRows][48];
+char16_t g_trophy_help[kTrophyRows][200];
+char16_t g_trophy_text[kTrophyRows][32];
+struct TrophyScreen {
+    std::uint8_t* dialog = nullptr;
+    std::uint8_t* rows = nullptr;
+    std::uint8_t* widget[kTrophyRows] = {};
+    int page = 0;
+    std::uint32_t pad_was = 0;
+};
+TrophyScreen g_trophies;
+int g_trophy_page = 0;  // kept across opens, as Key Bindings' page is
+
+struct TrophyInfo {
+    const char *name = nullptr, *description = nullptr;
+    int grade = 0, hidden = 0;
+    std::int64_t when = 0;  // 0 while locked
+};
+bool trophy_info(int id, TrophyInfo& t) {
+    return runtime_trophy(id, &t.name, &t.description, &t.grade, &t.hidden, &t.when) != 0;
+}
+const char* const kTrophyGrades[] = {"", "Bronze", "Silver", "Gold", "Platinum"};
+
+void trophies_fill(int page) {
+    static constexpr int points[] = {0, 15, 30, 90, 180};  // PSN weights: progress counts points
+    int count = 0, earned = 0, got = 0, all = 0;
+    for (TrophyInfo t; trophy_info(count, t); ++count) {
+        const int p = points[std::clamp(t.grade, 0, 4)];
+        all += p;
+        if (t.when) ++earned, got += p;
+    }
+    const int pages = std::max(1, (count + kTrophyPerPage - 1) / kTrophyPerPage);
+    g_trophies.page = g_trophy_page = (page % pages + pages) % pages;
+    char buf[200];
+    to_utf16(g_trophy_label[0], "Page");
+    std::snprintf(buf, sizeof(buf), "%d of %d trophies earned, %d%% complete. Left and right change the page.",
+                  earned, count, all ? got * 100 / all : 0);
+    to_utf16(g_trophy_help[0], buf);
+    std::snprintf(buf, sizeof(buf), "%d / %d", g_trophies.page + 1, pages);
+    to_utf16(g_trophy_text[0], buf);
+    for (int r = 1; r < kTrophyRows; ++r) {
+        TrophyInfo t;
+        if (!trophy_info(g_trophies.page * kTrophyPerPage + r - 1, t)) {
+            g_trophy_label[r][0] = g_trophy_help[r][0] = g_trophy_text[r][0] = 0;
+            continue;
+        }
+        const char* grade = kTrophyGrades[std::clamp(t.grade, 0, 4)];
+        if (t.hidden && !t.when) {
+            to_utf16(g_trophy_label[r], "Hidden Trophy");
+            std::snprintf(buf, sizeof(buf), "%s. Keep playing to reveal this trophy.", grade);
+        } else {
+            to_utf16(g_trophy_label[r], t.name);
+            char date[32] = "";
+            const std::time_t when = static_cast<std::time_t>(t.when);
+            if (t.when > 1)
+                if (const std::tm* local = std::localtime(&when)) std::strftime(date, sizeof(date), " Earned %Y-%m-%d.", local);
+            std::snprintf(buf, sizeof(buf), "%s. %s%s", grade, t.description, date);
+        }
+        to_utf16(g_trophy_help[r], buf);
+        to_utf16(g_trophy_text[r], t.when ? "Earned" : "Locked");
+    }
+}
+
+bool trophies_alive() {
+    return screen_alive(g_trophies.dialog, g_trophies.rows, g_trophies.widget, g_trophy_value, kTrophyRows);
+}
+
+GUEST_ABI void pc_trophies_handler(void* dialog, void* params) {
+    host_log("pc-options: PCTrophies opened, dialog=%p params=%p", dialog, params);
+    alignas(16) std::uint8_t scratch[0x100]{};
+    hle_call_guest<std::int64_t>(guest_fn(kScratchInit), &scratch);
+    g_trophies = TrophyScreen{};
+    g_trophies.pad_was = input_delivered_buttons();  // the press that opened the screen
+    trophies_fill(g_trophy_page);
+    for (int r = 0; r < kTrophyRows; ++r)
+        add_text_row(dialog, &g_trophy_value[r], r ? kTrophyFirstRow + r - 1 : kTrophyPageRow, g_trophy_label[r],
+                     g_trophy_help[r], g_trophy_text[r]);
+    log_rows("PCTrophies", dialog, kTrophyRows, kTrophyRows);
+    if (dialog_row_count(dialog) < kTrophyRows) return;
+    auto* d = static_cast<std::uint8_t*>(dialog);
+    g_trophies.rows = d + kDialogRows;
+    for (int r = 0; r < kTrophyRows; ++r) g_trophies.widget[r] = dialog_widget(dialog, r);
+    g_trophies.dialog = d;
+    if (!trophies_alive()) {
+        host_log("pc-options: PCTrophies: the dialog is not laid out as expected; only the first page shows");
+        g_trophies = TrophyScreen{};
+    }
+}
+
+// The page row turns the page: Right or Confirm forward, Left back.
+void trophies_update(int row, bool focused) {
+    if (!focused || row != 0) return;
+    const std::uint32_t pad = input_delivered_buttons();
+    const std::uint32_t edge = pad & ~g_trophies.pad_was;
+    g_trophies.pad_was = pad;
+    if (!(edge & (menu_confirm_button() | 0x20u | 0x80u))) return;
+    trophies_fill(g_trophies.page + ((edge & 0x80u) ? -1 : 1));
+    redraw(g_trophies.rows);
+    for (int r = 0; r < kTrophyRows; ++r) redraw(g_trophies.widget[r] + kChoiceList);
 }
 
 // The "Defaults" row sub_1f20900 appends after the handler returns, in a
@@ -704,6 +816,8 @@ GUEST_ABI std::int64_t OpenControls(void* root,void* params) {return open_named(
 GUEST_ABI std::int64_t OpenKeys(void* root,void* params) {return open_named(root,params,"PCKeys",reinterpret_cast<void*>(&pc_keys_handler),-2);}
 GUEST_ABI void* OpenControlsRow(void* out,void* ctx) {GuestFunction f(kOpenerFunctorVTable,reinterpret_cast<void*>(&OpenControls));hle_call_guest<std::int64_t>(guest_fn(kOpenSectionFlow),out,ctx,f.buf);return out;}
 GUEST_ABI void* OpenKeysRow(void* out,void* ctx) {GuestFunction f(kOpenerFunctorVTable,reinterpret_cast<void*>(&OpenKeys));hle_call_guest<std::int64_t>(guest_fn(kOpenSectionFlow),out,ctx,f.buf);return out;}
+GUEST_ABI std::int64_t OpenTrophies(void* root,void* params) {return open_named(root,params,"PCTrophies",reinterpret_cast<void*>(&pc_trophies_handler),-2);}
+GUEST_ABI void* OpenTrophiesRow(void* out,void* ctx) {GuestFunction f(kOpenerFunctorVTable,reinterpret_cast<void*>(&OpenTrophies));hle_call_guest<std::int64_t>(guest_fn(kOpenSectionFlow),out,ctx,f.buf);return out;}
 GUEST_ABI void* SystemFinalize(void* out,void* builder,void* arg3) {
     std::int64_t flag=0;
     { Captions c(110013);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenEnhancementsRow));
@@ -719,6 +833,8 @@ GUEST_ABI void* SystemFinalize(void* out,void* builder,void* arg3) {
         {Captions c(110009);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenKeysRow));hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag);}
     }
     if (camera_page) { Captions c(110011);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenCameraRow));
+      hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag); }
+    { Captions c(110014);GuestFunction f(kRowFunctorVTable,reinterpret_cast<void*>(&OpenTrophiesRow));
       hle_call_guest<std::int64_t>(guest_fn(kAddCommandRow),builder,c.buf,f.buf,&flag); }
     hle_call_guest<std::int64_t>(guest_fn(kSystemFinalize),out,builder,arg3);
     host_log("pc-options: System list includes PC Enhancements%s%s",graphics_page?", PC Graphics / PC Effects":"",camera_page?", PC Camera":"");
@@ -875,6 +991,14 @@ void ListUpdate(std::uint8_t* comp, bool focused) {
     }
     auto* c = static_cast<std::uint8_t*>(comp);
     defaults_view_update(c, focused);
+    if (g_trophies.dialog && (c == g_trophies.rows || c == g_trophies.widget[0] + kChoiceList)) {
+        if (!trophies_alive()) {
+            g_trophies = TrophyScreen{};
+            return;
+        }
+        trophies_update(c == g_trophies.rows ? -2 : 0, focused);
+        return;
+    }
     if (!g_keys.dialog) {
         return;
     }

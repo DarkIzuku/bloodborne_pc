@@ -441,6 +441,10 @@ extern "C" int bbgpu_overlay_captures_input(void) {
     return BbOverlay::CapturesInput() ? 1 : 0;
 }
 
+extern "C" void bbgpu_trophy_popup(const char* name, int grade) {
+    BbOverlay::Notify(name ? name : "", grade);
+}
+
 extern "C" int bbgpu_text_input_begin(const char* initial, const char* prompt) {
     if (!g_window) return 0;
     g_window->BeginTextInput(initial ? initial : "", prompt ? prompt : "Text");

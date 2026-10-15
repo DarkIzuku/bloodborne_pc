@@ -41,4 +41,7 @@ bool MenuOpen();
 /// Window thread: the game's text dialog (ImeDialog) state, drawn as a box over the frame.
 void SetTextPrompt(bool active, const std::string& prompt, const std::string& text);
 
+/// Any thread: queues the trophy banner (UTF-8 name; grade 1 bronze .. 4 platinum) and its chime.
+void Notify(const std::string& name, int grade);
+
 } // namespace BbOverlay

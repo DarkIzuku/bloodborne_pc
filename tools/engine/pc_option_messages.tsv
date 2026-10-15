@@ -7,7 +7,7 @@
 # The port takes the next free blocks - 116000 PC Settings, 117000 PC
 # Graphics, 118000 PC Controls, 119000 Key Bindings, 120000 PC Effects, 121000
 # PC Camera, 122000 the title menu's Quit Game, 123000 Steam Deck (shown on a
-# Deck only), 124000 PC Enhancements - and 110006..110013 for the System rows
+# Deck only), 124000 PC Enhancements, 125000 Trophies - and 110006..110014 for the System rows
 # that open them. All are unused in the shipped menu.msgbnd. (Motion blur,
 # depth of field and chromatic aberration moved to PC Effects with their
 # 117000 ids.)
@@ -33,6 +33,7 @@
 110011	PC Camera	The follow camera: field of view, distance and height.
 110012	Steam Deck	Frame rate and model detail for the Steam Deck.
 110013	PC Enhancements	Enable the mirror, rebirth and PC Camera controls. Each needs a restart.
+110014	Trophies	The trophies earned in this game.
 116000	Vertical Sync	Wait for the display. Off can tear.
 116001	Fullscreen	Borderless, at the desktop resolution.
 116002	Mouse in Menus	Move and click to select.
@@ -96,6 +97,17 @@
 119006	Action	
 119007	Action	
 119020	Key Bindings
+# Trophies: Key Bindings' layout. The seven trophy rows and the page row are filled in by
+# the port at runtime (engine/option_menu.cpp, from runtime_services.c's trophy list).
+125000	Page	Left and right change the page.
+125001	Trophy
+125002	Trophy
+125003	Trophy
+125004	Trophy
+125005	Trophy
+125006	Trophy
+125007	Trophy
+125020	Trophies
 122000	Quit Game	Close the game and return to the desktop.
 123020	Steam Deck	
 123000	Frame Rate	30 fps: the screen's own 1280x800. 60 fps: 960x600 upscaled by FSR 1, Model Detail Low. Frame rate: on restart.
