@@ -55,3 +55,15 @@ vertical FOV and uses this port's output size. Vulkan UI composition adds unifor
 centered fitting, including stencil masks and window-space vertices. The existing
 presenter already letterboxes. The existing renderer, temporal resources,
 synchronization, shader and motion-vector paths remain in use.
+
+Frame pacing additions (120 FPS and uncapped gameplay):
+- `scripts/frame_rate.py` adapts the rate-dependent 90 FPS++ values and cloth
+  treatment in Awakenchan/BloodBorneButPc 4f93643eb573ae445a24db1d64eabf663a5d5147,
+  `engine/bbhost-changes.patch` (the `scripts/patches.py` portion, Kyo's FPS++).
+- The seven byte-checked measured physics/AI/ragdoll/grass steps follow
+  droogie/bbhost 566184a74f071166299bb656c4af479e5bbe2771,
+  `src/engine/frame_rate.cpp`, `kFrameTimeSites` (bbhost contributors,
+  Kyo and yogesh1239). The uncapped character load uses the existing FPS++ dt slot.
+- `gpu/shim/frame_pacing.*` independently gates presentation using the same
+  verified 1.09 front-end predicate documented in bbhost's `menu_pointer.cpp`.
+  No renderer, session implementation or broad frame-manager replacement is imported.
