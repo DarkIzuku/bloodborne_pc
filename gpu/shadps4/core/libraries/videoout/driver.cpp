@@ -23,6 +23,7 @@
 #include "common/thread.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
+#include "frame_pacing.h"
 #include "core/libraries/kernel/time.h"
 #include "core/libraries/videoout/driver.h"
 #include "core/libraries/kernel/equeue.h"
@@ -808,11 +809,25 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     Common::AccurateTimer timer{vblank_period};
 
     // bbport: frame limit (see EmulatorSettings::GetFrameLimit). A request waits in the queue
-    // until its slot; slots advance by one period (no drift) but never lag behind by more.
+    // until its slot. Title/loading guards and actual display refresh may change at runtime.
     const u32 frame_limit = EmulatorSettings.GetFrameLimit();
-    const auto frame_period = frame_limit ? std::chrono::nanoseconds(1000000000 / frame_limit)
-                                          : std::chrono::nanoseconds(0);
-    auto next_flip = std::chrono::steady_clock::now();
+    BbFramePacing::Limiter limiter;
+    std::chrono::nanoseconds logged_period{-1};
+    const auto update_limit = [&] {
+#ifdef _WIN32
+        const auto period = BbFramePacing::CurrentPeriod(frame_limit);
+        if (period != logged_period) {
+            std::printf("Frame pacing: effective %.3f FPS (%s)\n", period.count() ? 1e9 / period.count() : 0.0,
+                        BbFramePacing::CurrentScene() == BbFramePacing::Scene::Gameplay ? "gameplay" : "title/loading");
+            logged_period = period;
+        }
+        limiter.Configure(period, std::chrono::steady_clock::now());
+#else
+        limiter.Configure(frame_limit ? std::chrono::nanoseconds(1000000000 / frame_limit)
+                                      : std::chrono::nanoseconds(0), std::chrono::steady_clock::now());
+#endif
+    };
+    update_limit();
     std::printf("VideoOut: vblank %u Hz, frame limit %u FPS\n",
                 EmulatorSettings.GetVblankFrequency(), frame_limit);
 
@@ -836,7 +851,11 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         const auto tick_deadline = std::chrono::steady_clock::now() + vblank_period;
 
         if (DebugState.IsGuestThreadsPaused()) {
-            DrawLastFrame();
+            update_limit();
+            if (limiter.Due(std::chrono::steady_clock::now())) {
+                limiter.Presented(std::chrono::steady_clock::now());
+                DrawLastFrame();
+            }
             timer.End();
             continue;
         }
@@ -844,17 +863,18 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         // Check if it's time to take a request.
         auto& vblank_status = main_port.vblank_status;
         const auto now = std::chrono::steady_clock::now();
-        const bool flip_slot = !frame_limit || now >= next_flip;
+        update_limit();
+        const bool flip_slot = limiter.Due(now);
         if (flip_slot && vblank_status.count % (main_port.flip_rate + 1) == 0) {
             const auto request = receive_request();
-            if (request && frame_limit) {
-                next_flip = std::max(next_flip + frame_period, now - frame_period);
-            }
+            if (request) limiter.Presented(now);
             if (!request) {
                 if (timer.GetTotalWait().count() < 0) { // Dont draw too fast
                     if (!main_port.is_open) {
+                        limiter.Presented(now);
                         DrawBlankFrame();
                     } else if (ImGui::Core::MustKeepDrawing()) {
+                        limiter.Presented(now);
                         DrawLastFrame();
                     }
                 }
@@ -900,16 +920,21 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
                     break; // next vblank
                 }
             }
-            if (std::chrono::steady_clock::now() < next_flip) {
-                if (next_flip >= tick_deadline) {
+            update_limit();
+            if (!limiter.Due(std::chrono::steady_clock::now())) {
+                if (limiter.Next() >= tick_deadline) {
                     break;
                 }
-                std::this_thread::sleep_until(next_flip);
+                std::chrono::nanoseconds remaining{};
+                const auto wait = limiter.Next() - std::chrono::steady_clock::now();
+                if (wait.count() > 0) Common::AccurateSleep(wait, &remaining, false);
+                if (std::chrono::steady_clock::now() < limiter.Next()) std::this_thread::sleep_until(limiter.Next());
+                continue; // Recheck the limit and shutdown after waking.
             }
             const auto now = std::chrono::steady_clock::now();
             const auto request = receive_request();
             if (request) {
-                next_flip = std::max(next_flip + frame_period, now - frame_period);
+                limiter.Presented(now);
                 Flip(request);
                 FRAME_END;
             }

@@ -13,8 +13,18 @@
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
 #include "input/input.h"
+#include "frame_pacing.h"
 
 namespace Frontend {
+namespace {
+void UpdateDisplayRefresh(SDL_Window* window) {
+    const auto* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window));
+    const double hz = !mode ? 60.0 : mode->refresh_rate_denominator > 0
+        ? double(mode->refresh_rate_numerator) / mode->refresh_rate_denominator : mode->refresh_rate;
+    BbFramePacing::SetDisplayRefresh(hz);
+}
+}
+
 
 #ifdef _WIN32
 static HICON LoadBloodborneWindowIcon(bool small) {
@@ -100,6 +110,7 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     SDL_GetWindowSizeInPixels(window, &w, &h);
     width = w;
     height = h;
+    UpdateDisplayRefresh(window);
     LOG_INFO(Frontend, "Window {}x{} on {}", w, h, driver);
 }
 
@@ -175,6 +186,13 @@ bool WindowSDL::PollEvents() {
             continue;
         }
         switch (event.type) {
+        case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+        case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+        case SDL_EVENT_DISPLAY_CURRENT_MODE_CHANGED:
+        case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+        case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+            UpdateDisplayRefresh(window);
+            break;
         case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
         case SDL_EVENT_WINDOW_RESIZED: {
             int w = 0, h = 0;

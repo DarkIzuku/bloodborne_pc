@@ -420,3 +420,9 @@ if(WIN32)
     target_link_options(runtime-gamepad-test PRIVATE -Wl,--gc-sections)
     add_test(NAME runtime-gamepad COMMAND runtime-gamepad-test)
 endif()
+
+# Frame pacing is tested without launching the game or initializing a GPU.
+add_executable(frame-pacing-test EXCLUDE_FROM_ALL ../tests/test_frame_pacing.cpp shim/frame_pacing.cpp)
+target_include_directories(frame-pacing-test PRIVATE shim shadps4 ../tests)
+target_compile_options(frame-pacing-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+add_test(NAME frame-pacing COMMAND frame-pacing-test)

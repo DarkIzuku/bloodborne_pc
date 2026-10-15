@@ -37,8 +37,9 @@ public:
         static const u32 value = [] {
             const long hz = Number("BB_VBLANK_HZ", 60);
 #ifdef _WIN32
-            // Direct runtime launches must be safe too, even with legacy uncapped env vars.
-            return hz == 30 || hz == 60 || hz == 90 ? u32(hz) : 60u;
+            // Uncapped flips use the fine vblank clock; the independent title guard stays active.
+            return hz == 0 || hz == 480 ? 480u :
+                   hz == 30 || hz == 60 || hz == 90 || hz == 120 ? u32(hz) : 60u;
 #else
             return hz > 0 ? u32(hz) : 480u;
 #endif
@@ -50,8 +51,7 @@ public:
         static const bool value = [] {
             const long hz = Number("BB_VBLANK_HZ", 60);
 #ifdef _WIN32
-            (void)hz;
-            return false;
+            return hz == 0 || hz == 480;
 #else
             return hz <= 0 || hz > 120;
 #endif
@@ -63,7 +63,7 @@ public:
         static const u32 value = [] {
 #ifdef _WIN32
             const long fps = Number("BB_FPS_LIMIT", GetInstance()->GetVblankFrequency());
-            return fps == 30 || fps == 60 || fps == 90 ? u32(fps) : 60u;
+            return fps == 0 || fps == 30 || fps == 60 || fps == 90 || fps == 120 ? u32(fps) : 60u;
 #else
             return u32(std::max(0L, Number("BB_FPS_LIMIT", 0)));
 #endif
