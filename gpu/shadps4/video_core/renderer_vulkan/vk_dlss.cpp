@@ -91,7 +91,11 @@ using PFN_CreateFeature1 = NgxResult (*)(VkDevice, VkCommandBuffer, int feature,
 using PFN_EvaluateFeature = NgxResult (*)(VkCommandBuffer, const NgxHandle*, const NgxParameter*,
                                           void* progress_callback);
 using PFN_ReleaseFeature = NgxResult (*)(NgxHandle*);
-using PFN_Shutdown1 = NgxResult (*)(VkDevice);
+// This is the driver core, not the static SDK wrapper. On Windows its Shutdown1
+// export has an additional internal output argument. Use the stable no-argument
+// Shutdown wrapper: this renderer owns the sole Vulkan NGX initialization.
+// Verified in _nvngx.dll's exported Shutdown/Shutdown1 wrappers and synthetic dumps.
+using PFN_Shutdown = NgxResult (*)();
 
 // NVSDK_NGX_Parameter declares Set and Get overloads for unsigned long long, float, double,
 // unsigned int, int, two D3D resource pointers and void*, then Reset. Calls go through its
@@ -200,18 +204,28 @@ struct DlssUpscaler::Impl {
     PFN_CreateFeature1 create_feature = nullptr;
     PFN_EvaluateFeature evaluate_feature = nullptr;
     PFN_ReleaseFeature release_feature = nullptr;
-    PFN_Shutdown1 shutdown = nullptr;
+    PFN_Shutdown shutdown = nullptr;
 
     bool initialized = false;
+    // Keep all externally passed path/info storage alive through NGX shutdown.
+    std::wstring data_path;
+    std::vector<std::wstring> search_paths;
+    std::vector<const wchar_t*> search_path_ptrs;
+    FeatureCommonInfo common_info{};
     NgxParameter* capabilities = nullptr;
     NgxParameter* params = nullptr;
     NgxHandle* feature = nullptr;
     struct Key {
         u32 render_width, render_height, out_width, out_height;
         int quality;
+        int model;
         bool hdr;
         bool operator==(const Key&) const = default;
     } key{};
+    int requested_model = 0;
+    bool retire_pending = false;
+    u64 last_use_tick = 0;
+    std::array<bool, 14> rejected_models{};
 
     Impl(const Instance& instance_, Scheduler& scheduler_)
         : instance{instance_}, scheduler{scheduler_} {}
@@ -257,7 +271,7 @@ struct DlssUpscaler::Impl {
             !Load(create_feature, "NVSDK_NGX_VULKAN_CreateFeature1") ||
             !Load(evaluate_feature, "NVSDK_NGX_VULKAN_EvaluateFeature") ||
             !Load(release_feature, "NVSDK_NGX_VULKAN_ReleaseFeature") ||
-            !Load(shutdown, "NVSDK_NGX_VULKAN_Shutdown1")) {
+            !Load(shutdown, "NVSDK_NGX_VULKAN_Shutdown")) {
             Fail("the NVIDIA NGX core lacks the Vulkan entry points", true);
             return false;
         }
@@ -311,14 +325,13 @@ struct DlssUpscaler::Impl {
         std::error_code ec;
         const auto data_dir = std::filesystem::temp_directory_path(ec) / "bbport-ngx";
         std::filesystem::create_directories(data_dir, ec);
-        const std::wstring data_path = data_dir.wstring();
-        const auto paths = SearchPaths();
-        std::vector<const wchar_t*> path_ptrs;
-        for (const auto& p : paths) {
-            path_ptrs.push_back(p.c_str());
+        data_path = data_dir.wstring();
+        search_paths = SearchPaths();
+        for (const auto& p : search_paths) {
+            search_path_ptrs.push_back(p.c_str());
         }
-        const FeatureCommonInfo info{
-            .path_list = {path_ptrs.data(), static_cast<unsigned>(path_ptrs.size())},
+        common_info = {
+            .path_list = {search_path_ptrs.data(), static_cast<unsigned>(search_path_ptrs.size())},
             .internal_data = nullptr,
             .logging = {&Log, std::getenv("BB_DLSS_LOG") ? 2 : 0, false},
         };
@@ -327,7 +340,7 @@ struct DlssUpscaler::Impl {
             init(kApplicationId, data_path.c_str(), VkInstance(instance.GetInstance()),
                  VkPhysicalDevice(instance.GetPhysicalDevice()), VkDevice(instance.GetDevice()),
                  dispatcher.vkGetInstanceProcAddr, dispatcher.vkGetDeviceProcAddr, kNgxApiVersion,
-                 &info);
+                 &common_info);
         if (Failed(r)) {
             Fail(fmt_hex("NGX initialization failed", r), true);
             return;
@@ -368,18 +381,53 @@ struct DlssUpscaler::Impl {
         return text;
     }
 
+    bool OnFrameStart(bool invalidate) {
+        const int model = BbSettings::ParseDlssPreset(BbSettings::DlssPresetName(BbSettings::Get().dlss_preset));
+        const bool changed = model != requested_model || invalidate || retire_pending;
+        if (changed && feature) {
+            scheduler.Finish(); // Flushes only here, before this frame's passes acquire cmdbuf.
+            release_feature(feature);
+            feature=nullptr;
+        }
+        requested_model=model;
+        retire_pending=false;
+        return changed;
+    }
+
+    bool FreshParameters(int model) {
+        if (params) { destroy_parameters(params); params=nullptr; }
+        if (Failed(allocate_parameters(&params)) || !params) {
+            Fail("NGX parameter allocation failed during recreation", false);
+            return false;
+        }
+        // Auto deliberately leaves hints unset, preserving the existing NGX behavior.
+        if (model) for (const char* name : BbSettings::DlssHintKeys) SetUI(params, name, model);
+        return true;
+    }
+
     bool Record(const Fsr4Upscaler::Frame& f) {
         if (!available) {
             return false;
         }
         const Key wanted{f.render_width, f.render_height, f.output.width, f.output.height,
-                         Quality(f.preset), IsFloatFormat(f.color.format)};
+                         Quality(f.preset), requested_model, IsFloatFormat(f.color.format)};
+        bool fresh_history=false;
         if (!feature || !(wanted == key)) {
             if (feature) {
-                scheduler.Finish(); // the feature's resources may still be in use
+                if (last_use_tick >= scheduler.CurrentTick()) {
+                    // Unexpected format change within one submission. Defer retirement to
+                    // the next frame, rather than ending f.cmdbuf halfway through its pass.
+                    retire_pending=true;
+                    Fail("DLSS recreation deferred to the next frame boundary", false);
+                    return false;
+                }
+                scheduler.WaitSubmittedWork(); // Does not close f.cmdbuf.
                 release_feature(feature);
                 feature = nullptr;
             }
+            int effective_model = rejected_models[wanted.model] ? 0 : wanted.model;
+            if (!FreshParameters(effective_model)) return false;
+            const auto configure = [&] {
             SetUI(params, "CreationNodeMask", 1);
             SetUI(params, "VisibilityNodeMask", 1);
             SetUI(params, "Width", wanted.render_width);
@@ -394,15 +442,42 @@ struct DlssUpscaler::Impl {
             }
             SetI(params, "DLSS.Feature.Create.Flags", flags);
             SetI(params, "DLSS.Enable.Output.Subrects", 0);
-            const NgxResult r = create_feature(VkDevice(instance.GetDevice()),
+            };
+            configure();
+            NgxResult r = create_feature(VkDevice(instance.GetDevice()),
                                                VkCommandBuffer(f.cmdbuf), kFeatureSuperSampling,
                                                params, &feature);
+            if ((Failed(r) || !feature) && effective_model) {
+                // NGX cannot enumerate individual model availability. A rejected hint
+                // retries the same quality/geometry with clean Auto parameters once.
+                std::printf("DLSS: model %s rejected (0x%08x); retrying Auto\n",
+                            BbSettings::DlssPresetName(effective_model), r);
+                rejected_models[effective_model]=true;
+                if (feature) {
+                    // Some cores return a partial handle on failure. Retire it only
+                    // after GPU completion, then retry Auto on the next boundary.
+                    // Remember rejection now so we cannot recreate the same bad hint.
+                    last_use_tick=scheduler.CurrentTick();
+                    retire_pending=true;
+                    Fail(fmt_hex("DLSS partial feature deferred; Auto will retry next frame", r), false);
+                    return false;
+                }
+                effective_model=0;
+                if (!FreshParameters(0)) return false;
+                configure();
+                r=create_feature(VkDevice(instance.GetDevice()), VkCommandBuffer(f.cmdbuf),
+                                 kFeatureSuperSampling, params, &feature);
+            }
             if (Failed(r) || !feature) {
-                feature = nullptr;
+                if (feature) { last_use_tick=scheduler.CurrentTick(); retire_pending=true; }
                 Fail(fmt_hex("DLSS feature creation failed", r), false);
                 return false;
             }
             key = wanted;
+            fresh_history=true;
+            last_use_tick=scheduler.CurrentTick();
+            std::printf("DLSS: requested model %s, submitted hint %s (runtime may alias legacy models)\n",
+                        BbSettings::DlssPresetName(wanted.model), BbSettings::DlssPresetName(effective_model));
             std::printf("DLSS: %ux%u -> %ux%u, quality mode %d, %s input\n", key.render_width,
                         key.render_height, key.out_width, key.out_height, key.quality,
                         key.hdr ? "HDR" : "LDR");
@@ -418,12 +493,13 @@ struct DlssUpscaler::Impl {
         SetF(params, "Jitter.Offset.X", f.jitter[0]);
         SetF(params, "Jitter.Offset.Y", f.jitter[1]);
         SetF(params, "Sharpness", 0.0f);
-        SetI(params, "Reset", f.reset ? 1 : 0);
+        SetI(params, "Reset", (f.reset || fresh_history) ? 1 : 0);
         SetF(params, "MV.Scale.X", 1.0f);
         SetF(params, "MV.Scale.Y", 1.0f);
         SetUI(params, "DLSS.Render.Subrect.Dimensions.Width", f.render_width);
         SetUI(params, "DLSS.Render.Subrect.Dimensions.Height", f.render_height);
         SetF(params, "FrameTimeDeltaInMsec", f.frame_ms);
+        last_use_tick=scheduler.CurrentTick();
         const NgxResult r =
             evaluate_feature(VkCommandBuffer(f.cmdbuf), feature, params, nullptr);
         if (Failed(r)) {
@@ -448,7 +524,8 @@ struct DlssUpscaler::Impl {
         if (capabilities) {
             destroy_parameters(capabilities);
         }
-        shutdown(VkDevice(instance.GetDevice()));
+        const auto result = shutdown();
+        if (Failed(result)) std::printf("DLSS: NGX shutdown failed (0x%08x)\n", result);
     }
 };
 
@@ -462,6 +539,8 @@ DlssUpscaler::~DlssUpscaler() = default;
 bool DlssUpscaler::Available() const noexcept {
     return impl->available;
 }
+
+bool DlssUpscaler::OnFrameStart(bool invalidate) { return impl->OnFrameStart(invalidate); }
 
 bool DlssUpscaler::Record(const Fsr4Upscaler::Frame& frame) {
     return impl->Record(frame);

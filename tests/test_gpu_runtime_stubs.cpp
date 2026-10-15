@@ -19,7 +19,7 @@ void runtime_file_unmount(const char*) {}
 __thread RuntimeRecoverBuf* runtime_fault_recover = nullptr;
 int runtime_setjmp(RuntimeRecoverBuf*) { return 0; }
 [[noreturn]] void runtime_longjmp(RuntimeRecoverBuf*) { std::abort(); }
-uint32_t runtime_disabled_optimizations = 0;
+uint64_t runtime_disabled_optimizations = 0;
 uint64_t runtime_experiment_bits = 0;
 uint64_t runtime_tsc_frequency() { return 1000000000; }
 int runtime_file_translate(const char*, char*, size_t) { std::abort(); }

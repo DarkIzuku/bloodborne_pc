@@ -29,6 +29,9 @@ public:
     /// Records DLSS into `frame.cmdbuf` (the frame's preset picks the DLSS quality mode).
     /// False when DLSS cannot run; Problem() says why.
     bool Record(const Fsr4Upscaler::Frame& frame);
+    /// Retire at the frame boundary, before acquiring any pass command buffer.
+    /// Returns true when the temporal history must be reset.
+    bool OnFrameStart(bool invalidate);
 
     [[nodiscard]] const char* Problem() const noexcept;
     [[nodiscard]] bool Fatal() const noexcept;

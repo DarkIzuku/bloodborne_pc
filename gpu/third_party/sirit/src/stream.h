@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include <cstdlib>
+
 #include <bit>
 #include <span>
 #include <cassert>

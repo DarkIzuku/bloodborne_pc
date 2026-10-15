@@ -12,6 +12,8 @@
 #include <deque>
 #include <functional>
 #include <memory>
+#include <limits>
+#include <type_traits>
 #include <span>
 #include <utility>
 #include <vector>
@@ -601,16 +603,44 @@ struct SubmissionBatch {
 class RecordChunk {
 public:
     static constexpr size_t Capacity = 128 * 1024;
+    static constexpr size_t CommandReserve = 1024;
+
+    RecordChunk() = default;
+    RecordChunk(const RecordChunk&) = delete;
+    RecordChunk& operator=(const RecordChunk&) = delete;
+    ~RecordChunk() { Reset(); }
+
+    // Adapted from AwesomeObserver/windows. Payloads keep the lifetime of
+    // their recording chunk; fitting commands retain the allocation-free path.
+    bool ReserveData(size_t bytes) {
+        if (bytes > std::numeric_limits<size_t>::max() - CommandReserve) return false;
+        const size_t remaining = Capacity - used;
+        if (remaining < CommandReserve) return false;
+        if (spill_cursor && spill_remaining >= bytes) return true;
+        if (bytes <= remaining - CommandReserve) {
+            spill_cursor = nullptr;
+            spill_remaining = 0;
+            return true;
+        }
+        if (bytes <= Capacity - CommandReserve) return false;
+        auto block = std::make_unique_for_overwrite<std::byte[]>(bytes);
+        // Publish the cursor only after its owner was retained successfully.
+        auto* cursor = block.get();
+        spill_blocks.push_back(std::move(block));
+        spill_cursor = cursor;
+        spill_remaining = bytes;
+        return true;
+    }
 
     /// Returns false (and leaves `func` untouched) when the chunk has no room.
     template <typename Func>
     bool Push(Func&& func) {
         using Command = TypedCommand<std::decay_t<Func>>;
         static_assert(sizeof(Command) <= Capacity, "recorded command is too large");
-        const size_t offset = (used + alignof(Command) - 1) & ~(alignof(Command) - 1);
-        if (offset + sizeof(Command) > Capacity) {
-            return false;
-        }
+        void* location = storage + used;
+        size_t remaining = Capacity - used;
+        if (!std::align(alignof(Command), sizeof(Command), location, remaining)) return false;
+        const size_t offset = static_cast<std::byte*>(location) - storage;
         auto* command = new (storage + offset) Command(std::forward<Func>(func));
         if (last) {
             last->next = command;
@@ -625,24 +655,32 @@ public:
 
     /// Raw storage in the chunk for a command's variable-length data; null when full.
     void* Allocate(size_t bytes, size_t align) {
-        const size_t offset = (used + align - 1) & ~(align - 1);
-        if (offset + bytes > Capacity) {
-            return nullptr;
+        if (!align || (align & (align - 1))) return nullptr;
+        void* location = spill_cursor ? spill_cursor : storage + used;
+        size_t remaining = spill_cursor ? spill_remaining : Capacity - used;
+        if (!std::align(align, bytes, location, remaining)) return nullptr;
+        if (spill_cursor) {
+            const size_t consumed = spill_remaining - remaining + bytes;
+            if (consumed > std::numeric_limits<size_t>::max() - spill_used) return nullptr;
+            spill_used += consumed;
+            spill_cursor = static_cast<std::byte*>(location) + bytes;
+            spill_remaining = remaining - bytes;
+        } else {
+            used = static_cast<std::byte*>(location) - storage + bytes;
+            PrefetchAhead();
         }
-        used = offset + bytes;
-        PrefetchAhead();
-        return storage + offset;
+        return location;
     }
 
     void Execute(vk::CommandBuffer cmdbuf) {
-        for (CommandBase* command = first; command;) {
+        while (first) {
+            CommandBase* command = first;
             CommandBase* const next = command->next;
             command->Execute(cmdbuf);
             command->~CommandBase();
-            command = next;
+            first = next;
         }
-        first = last = nullptr;
-        used = 0;
+        Reset();
     }
 
     [[nodiscard]] bool Empty() const noexcept {
@@ -650,7 +688,8 @@ public:
     }
 
     [[nodiscard]] size_t Size() const noexcept {
-        return used;
+        return spill_used > std::numeric_limits<size_t>::max() - used
+                   ? std::numeric_limits<size_t>::max() : used + spill_used;
     }
 
     u32 segment = 0; ///< the command buffer segment the chunk is recorded into (Scheduler)
@@ -660,11 +699,22 @@ public:
     u32 after = 0;
 
 private:
+    void Reset() noexcept {
+        while (first) {
+            CommandBase* command = first;
+            first = first->next;
+            command->~CommandBase();
+        }
+        last = nullptr;
+        used = spill_used = spill_remaining = 0;
+        spill_cursor = nullptr;
+        spill_blocks.clear();
+    }
     /// The recording thread last read these cache lines: the first write to each has to take
     /// it back from that core. Requesting ownership a few lines ahead overlaps those
     /// transfers instead of stalling on each (RecordPrefetch).
     void PrefetchAhead() const {
-        if (!BbToggle::Disabled(BbToggle::RecordPrefetch)) {
+        if (used <= Capacity - 449 && !BbToggle::Disabled(BbToggle::RecordPrefetch)) {
             __builtin_prefetch(storage + used + 384, 1, 3);
             __builtin_prefetch(storage + used + 448, 1, 3);
         }
@@ -687,6 +737,9 @@ private:
 
     alignas(64) std::byte storage[Capacity];
     size_t used = 0;
+    std::vector<std::unique_ptr<std::byte[]>> spill_blocks;
+    std::byte* spill_cursor = nullptr;
+    size_t spill_remaining = 0, spill_used = 0;
     CommandBase* first{};
     CommandBase* last{};
 };
@@ -861,12 +914,14 @@ public:
     /// Makes room for `bytes` of RecordData() plus the command that uses them in the current
     /// chunk: data and command must share a chunk, which is recycled once executed.
     void ReserveRecordData(size_t bytes) {
+        ProducerScope producer{*this, "ReserveRecordData"};
         if (!IsRecordingDeferred()) {
             return;
         }
-        ASSERT(bytes + 1024 <= RecordChunk::Capacity);
-        if (RecordChunk::Capacity - record_chunk->Size() < bytes + 1024) {
+        if (!record_chunk->ReserveData(bytes)) {
             RetireChunk();
+            const bool reserved = record_chunk->ReserveData(bytes);
+            ASSERT_MSG(reserved, "Cannot reserve {} bytes in an empty recording chunk", bytes);
         }
     }
 
@@ -879,9 +934,13 @@ public:
             return data;
         }
         // Room for the data and the command that follows it, so both stay in one chunk.
+        static_assert(std::is_trivially_copyable_v<T>, "recorded payload must be trivially copyable");
+        ASSERT_MSG(data.size() <= (std::numeric_limits<size_t>::max() - alignof(T)) / sizeof(T),
+                   "Recorded payload size overflows size_t");
         const size_t bytes = data.size_bytes();
         ReserveRecordData(bytes + alignof(T));
         auto* dst = static_cast<T*>(record_chunk->Allocate(bytes, alignof(T)));
+        ASSERT_MSG(dst, "Cannot allocate {} recorded bytes, alignment {}", bytes, alignof(T));
         std::memcpy(dst, data.data(), bytes);
         return {dst, data.size()};
     }

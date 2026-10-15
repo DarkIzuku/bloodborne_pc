@@ -402,6 +402,7 @@ private:
         DeleteImage(image_id);
     }
 
+    bool WriteBackTiledImage(ImageId image_id);
     void GarbageCollectImages();
     void GarbageCollectSamplers();
 
@@ -424,6 +425,9 @@ private:
     /// bbport: gc_tick at each of the last 64 seconds (GarbageCollectImages).
     std::array<u64, 64> gc_tick_at_second{};
     u64 gc_second = 0;
+    u64 gc_budget_second = ~0ull;
+    u64 gc_base_pressure = 0, gc_base_critical = 0;
+    std::array<u64, 64> gc_submit_ticks{};
     u64 trigger_gc_memory = 0;
     u64 pressure_gc_memory = 0;
     u64 critical_gc_memory = 0;

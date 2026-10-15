@@ -44,6 +44,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
                 v.upscaler = u;
             }
         }
+    } else if (key == "dlss_preset") {
+        v.dlss_preset = ParseDlssPreset(value);
+        if (!v.dlss_preset && value != "Auto" && value != "auto" && value != "0" && value != "DEFAULT")
+            std::printf("Settings: DLSS model %s resolves to Auto\n", value.c_str());
     } else if (key == "preset") {
         v.preset = std::clamp(i, 0, PresetCount - 1);
     } else if (key == "sharpen") {
@@ -195,6 +199,7 @@ void Load() {
         {"BB_FSR_SHARPNESS", "sharpness"},        {"BB_JITTER", "jitter"},
         {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
         {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
+        {"BB_DLSS_PRESET", "dlss_preset"},
         {"BB_UPSCALE_PRESET", "preset"},            {"BB_OBJECT_MOTION", "object_motion"},
     };
     for (const auto& [env, key] : env_keys) {
@@ -267,6 +272,7 @@ void Save() {
     put("menu_language", v.menu_language == MenuLanguage::Russian ? "ru" : "en");
     put("upscaler", UpscalerName(v.upscaler));
     put("preset", std::to_string(v.preset.load()));
+    put("dlss_preset", DlssPresetName(v.dlss_preset));
     put("sharpen", flag(v.sharpen));
     put("sharpness", fixed(v.sharpness, 2));
     put("jitter", flag(v.jitter));

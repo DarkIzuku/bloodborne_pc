@@ -114,6 +114,8 @@ struct Image {
         return track_addr != 0 && track_addr_end != 0;
     }
 
+    u64 writeback_retry_tick = 0; // bounded unsupported tiled-image retries
+
     bool SafeToDownload() const {
         return True(flags & ImageFlagBits::GpuModified) && False(flags & (ImageFlagBits::Dirty));
     }

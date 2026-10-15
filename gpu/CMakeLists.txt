@@ -109,7 +109,8 @@ if (WIN32)
             target_compile_options(${ffx_target} PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cstdio>"
                 "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cwchar>" "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cstring>"
                 "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include cmath>" "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include new>"
-                "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include mutex>")
+                "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include mutex>"
+                "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include \"${CMAKE_CURRENT_SOURCE_DIR}/shim/ffx_windows_compat.h\">")
         endif()
     endforeach()
 endif()
@@ -170,6 +171,23 @@ set(COMMON
     shim/common/logging/log.cpp)
 file(GLOB AVPLAYER CONFIGURE_DEPENDS shadps4/core/libraries/avplayer/*.cpp)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale libswresample)
+if(WIN32)
+    # Relocated MSYS2 pkg-config can return bin/../include. Clang does not
+    # recognize that spelling as its implicit C include directory and places it
+    # ahead of libc++ wrappers, breaking <cctype>/<cwchar>. Canonicalize only
+    # existing imported include paths; never reorder the C++ standard library.
+    foreach(bb_pkg IN ITEMS PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG)
+        get_target_property(bb_includes ${bb_pkg} INTERFACE_INCLUDE_DIRECTORIES)
+        set(bb_normalized)
+        foreach(bb_include IN LISTS bb_includes)
+            if(IS_DIRECTORY "${bb_include}")
+                file(REAL_PATH "${bb_include}" bb_include)
+            endif()
+            list(APPEND bb_normalized "${bb_include}")
+        endforeach()
+        set_target_properties(${bb_pkg} PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${bb_normalized}")
+    endforeach()
+endif()
 file(GLOB SHIM_SOURCES CONFIGURE_DEPENDS shim/*.cpp shim/*/*.cpp)
 if (WIN32)
     # These optional experiments use Linux dma-buf mappings and SIGTRAP hooks. Keep the
@@ -278,6 +296,63 @@ target_compile_options(camera-motion-test PRIVATE -UNDEBUG -fPIC)
 target_link_libraries(camera-motion-test PRIVATE bbgpu)
 add_dependencies(camera-motion-test host_shaders)
 
+# Large deferred payload ownership/regression, adapted from AwesomeObserver/windows.
+add_executable(dlss-model-test EXCLUDE_FROM_ALL ../tests/test_dlss_model.cpp ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(dlss-model-test PRIVATE shim shadps4 third_party/gcn/include)
+target_compile_definitions(dlss-model-test PRIVATE NDEBUG)
+target_link_libraries(dlss-model-test PRIVATE bbgpu)
+if(WIN32)
+    target_sources(dlss-model-test PRIVATE ../src/win32_crash.c)
+endif()
+
+add_executable(record-data-test EXCLUDE_FROM_ALL ../tests/test_record_data.cpp ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(record-data-test PRIVATE shim shadps4 third_party/gcn/include)
+target_compile_definitions(record-data-test PRIVATE NDEBUG)
+target_link_libraries(record-data-test PRIVATE bbgpu)
+enable_testing()
+add_executable(gc-policy-test EXCLUDE_FROM_ALL ../tests/test_gc_policy.cpp)
+target_include_directories(gc-policy-test PRIVATE shadps4)
+target_compile_options(gc-policy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+add_test(NAME gc-policy COMMAND gc-policy-test)
+add_executable(tiled-writeback-test EXCLUDE_FROM_ALL
+    ../tests/test_tiled_writeback.cpp ../tests/test_gpu_runtime_stubs.cpp)
+target_include_directories(tiled-writeback-test PRIVATE shim shadps4 third_party/gcn/include)
+target_compile_definitions(tiled-writeback-test PRIVATE NDEBUG)
+target_link_libraries(tiled-writeback-test PRIVATE bbgpu)
+if(WIN32)
+    target_sources(tiled-writeback-test PRIVATE ../src/win32_crash.c)
+    target_link_libraries(tiled-writeback-test PRIVATE onecore)
+endif()
+add_test(NAME tiled-writeback COMMAND tiled-writeback-test)
+set_tests_properties(tiled-writeback PROPERTIES TIMEOUT 120)
+add_executable(user-data-test EXCLUDE_FROM_ALL ../tests/test_user_data.cpp)
+target_include_directories(user-data-test PRIVATE shim shadps4 third_party/gcn/include)
+target_link_libraries(user-data-test PRIVATE bbgpu)
+add_test(NAME user-data COMMAND user-data-test)
+if(WIN32)
+    add_executable(memory-notifications-test EXCLUDE_FROM_ALL
+        ../tests/test_memory_notifications.c ../src/win32_memory.c)
+    target_include_directories(memory-notifications-test PRIVATE ../src)
+    target_compile_options(memory-notifications-test PRIVATE -UNDEBUG -Wall -Wextra -Werror
+        -ffunction-sections -fdata-sections)
+    target_compile_definitions(memory-notifications-test PRIVATE _WIN32_WINNT=0x0A00)
+    # As in the game runtime, keep this host executable outside guest VA space.
+    target_link_options(memory-notifications-test PRIVATE -Wl,--gc-sections
+        -Wl,--disable-dynamicbase,--disable-high-entropy-va)
+    add_test(NAME memory-notifications COMMAND memory-notifications-test)
+endif()
+foreach(mode IN ITEMS async sync direct)
+    add_test(NAME record-data-${mode} COMMAND record-data-test)
+    if(mode STREQUAL "async")
+        set(record_mode_env "BB_ASYNC_SUBMIT=1;BB_VK_RECORD_THREAD=1")
+    elseif(mode STREQUAL "sync")
+        set(record_mode_env "BB_ASYNC_SUBMIT=0;BB_VK_RECORD_THREAD=1")
+    else()
+        set(record_mode_env "BB_ASYNC_SUBMIT=0;BB_VK_RECORD_THREAD=0")
+    endif()
+    set_tests_properties(record-data-${mode} PROPERTIES TIMEOUT 120 ENVIRONMENT "${record_mode_env};BB_VK_RECORD_THREADS=3;BB_VK_SEGMENT_KB=1;BB_PRODUCER_CHECK=1")
+endforeach()
+
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
     shim/bbport_settings.cpp)
@@ -318,3 +393,13 @@ add_executable(widescreen-test EXCLUDE_FROM_ALL ../tests/test_widescreen.cpp
     shim/engine/widescreen.cpp shim/engine/engine_hooks.cpp shim/bbport_settings.cpp)
 target_include_directories(widescreen-test PRIVATE shim)
 target_compile_options(widescreen-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
+if(WIN32)
+    add_executable(gpu-assert-crash-test EXCLUDE_FROM_ALL
+        ../tests/test_gpu_assert_crash.cpp ../src/win32_crash.c shim/common/assert.cpp
+        shim/common/logging/log.cpp)
+    target_include_directories(gpu-assert-crash-test PRIVATE shim shadps4)
+    target_compile_options(gpu-assert-crash-test PRIVATE -UNDEBUG)
+    target_compile_definitions(gpu-assert-crash-test PRIVATE BB_CRASH_TEST_STALL=1)
+    target_link_libraries(gpu-assert-crash-test PRIVATE fmt::fmt)
+endif()
