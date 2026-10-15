@@ -17,7 +17,10 @@ SDL window thread (fractional rates retained, refreshed on display/mode changes)
 The actual Vulkan mode, including unsupported-mode fallback, controls this rule.
 The present limiter also covers repeated/blank frames and does not catch up with
 bursts after stalls. Frame queue ownership/backpressure and GPU synchronization
-remain unchanged. Logs report display refresh and effective cap changes.
+remain unchanged. A continuously nonempty flip queue still returns at every
+vblank deadline: condition-variable predicates otherwise bypass an expired
+wait_until deadline and can starve guest vblank events in uncapped mode.
+Logs report display refresh and effective cap changes.
 
 120 derives Kyo's 90 FPS++ timing values as in Awakenchan's Windows port. New
 high-FPS modes also use byte-verified measured physics/AI/ragdoll/grass steps

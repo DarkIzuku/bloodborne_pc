@@ -920,6 +920,10 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
                     break; // next vblank
                 }
             }
+            // wait_until's predicate may stay true even AFTER its deadline when
+            // the queue never drains. Uncapped flips must still return to the
+            // outer loop to emit vblank events that guest threads are waiting on.
+            if (std::chrono::steady_clock::now() >= tick_deadline) break;
             update_limit();
             if (!limiter.Due(std::chrono::steady_clock::now())) {
                 if (limiter.Next() >= tick_deadline) {
