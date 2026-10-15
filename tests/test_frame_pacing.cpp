@@ -22,7 +22,13 @@ bool ReadProcessMemory(const void* p,void* out,std::size_t size) {
 #endif
 }
 }
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 3 && !std::strcmp(argv[1], "--expect-present")) {
+        const auto actual = EmulatorSettings.GetPresentMode();
+        assert(actual == argv[2]);
+        std::printf("PASS: runtime present policy %s\n", actual.c_str());
+        return 0;
+    }
     using namespace BbFramePacing;
     using namespace std::chrono;
     for(unsigned cap:{0u,30u,60u,90u,120u}) {

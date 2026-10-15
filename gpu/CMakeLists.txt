@@ -426,3 +426,33 @@ add_executable(frame-pacing-test EXCLUDE_FROM_ALL ../tests/test_frame_pacing.cpp
 target_include_directories(frame-pacing-test PRIVATE shim shadps4 ../tests)
 target_compile_options(frame-pacing-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 add_test(NAME frame-pacing COMMAND frame-pacing-test)
+if(WIN32)
+    foreach(present IN ITEMS Mailbox Immediate FifoRelaxed Fifo)
+        foreach(fps IN ITEMS 120 uncap)
+            if(fps STREQUAL "uncap")
+                set(limit 0)
+                set(hz 480)
+            else()
+                set(limit 120)
+                set(hz 120)
+            endif()
+            add_test(NAME frame-pacing-${fps}-${present} COMMAND ${CMAKE_COMMAND} -E env
+                BB_FPS=${fps} BB_FPS_LIMIT=${limit} BB_VBLANK_HZ=${hz}
+                BB_PRESENT_MODE=${present} $<TARGET_FILE:frame-pacing-test> --expect-present Fifo)
+        endforeach()
+        foreach(fps IN ITEMS 30 60 90)
+            add_test(NAME frame-pacing-${fps}-${present} COMMAND ${CMAKE_COMMAND} -E env
+                BB_FPS=${fps} BB_FPS_LIMIT=${fps} BB_VBLANK_HZ=${fps}
+                BB_PRESENT_MODE=${present} $<TARGET_FILE:frame-pacing-test> --expect-present ${present})
+        endforeach()
+    endforeach()
+    add_test(NAME frame-pacing-direct-120 COMMAND ${CMAKE_COMMAND} -E env
+        BB_FPS= BB_FPS_LIMIT=120 BB_VBLANK_HZ=60 BB_PRESENT_MODE=Immediate
+        $<TARGET_FILE:frame-pacing-test> --expect-present Fifo)
+    add_test(NAME frame-pacing-direct-unlimited COMMAND ${CMAKE_COMMAND} -E env
+        BB_FPS= BB_FPS_LIMIT=0 BB_VBLANK_HZ=60 BB_PRESENT_MODE=Mailbox
+        $<TARGET_FILE:frame-pacing-test> --expect-present Fifo)
+    add_test(NAME frame-pacing-legacy-unlimited COMMAND ${CMAKE_COMMAND} -E env
+        BB_FPS= BB_FPS_LIMIT=60 BB_VBLANK_HZ=480 BB_PRESENT_MODE=FifoRelaxed
+        $<TARGET_FILE:frame-pacing-test> --expect-present Fifo)
+endif()

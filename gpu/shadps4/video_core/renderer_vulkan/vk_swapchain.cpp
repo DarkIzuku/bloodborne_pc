@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cstdio>
 #include <limits>
 #include "common/assert.h"
 #include "common/logging/log.h"
@@ -205,6 +206,8 @@ void Swapchain::FindPresentMode() {
                           "guaranteed supported option.");
         present_mode = vk::PresentModeKHR::eFifo;
         BbFramePacing::SetVSync(true);
+        if (EmulatorSettings.Flag("BB_FRAME_STATS", false))
+            std::puts("Frame pacing: Vulkan present mode Fifo (surface query fallback)");
         return;
     }
 
@@ -230,6 +233,8 @@ void Swapchain::FindPresentMode() {
                     vk::to_string(present_mode), vk::to_string(fallback));
         present_mode = fallback;
     }
+    if (EmulatorSettings.Flag("BB_FRAME_STATS", false))
+        std::printf("Frame pacing: Vulkan present mode %s\n", vk::to_string(present_mode).c_str());
     // Publish the selected mode, including fallback, rather than the requested INI value.
     BbFramePacing::SetVSync(present_mode == vk::PresentModeKHR::eFifo ||
                            present_mode == vk::PresentModeKHR::eFifoRelaxed);

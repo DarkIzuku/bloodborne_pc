@@ -99,6 +99,10 @@ def configure_frame_rate(env):
         fps = '60'
     env.update(BB_FPS=fps, BB_FPS_LIMIT='0' if fps == 'uncap' else fps,
                BB_VBLANK_HZ='480' if fps == 'uncap' else fps if fps in ('90','120') else '60')
+    if fps in ('120', 'uncap'):
+        env['BB_PRESENT_MODE'] = 'Fifo'
+        if env.get('BB_FRAME_STATS', '')[:1] in ('1', 'y', 't'):
+            print(f'Presentation: {fps} uses FIFO (VSync).', flush=True)
     return fps
 
 

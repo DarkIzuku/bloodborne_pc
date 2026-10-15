@@ -11,10 +11,17 @@ inventory, shops and System menus. Title/front-end frames are limited to at most
 unknown image/state the safe ceiling remains. Returning to title restores it.
 No memory is written to determine menu state, and PC Controls may be disabled.
 
-Unlimited means no gameplay software cap with Mailbox/Immediate. FIFO and FIFO
-Relaxed additionally cap production to the current monitor's refresh, read on the
-SDL window thread (fractional rates retained, refreshed on display/mode changes).
-The actual Vulkan mode, including unsupported-mode fallback, controls this rule.
+On Windows, 120 FPS and Unlimited require FIFO (VSync). The launcher selects and
+locks this choice in either FPS selector, migrates older saved choices, and saves
+FIFO. Switching back to 30/60/90 enables all present choices again. The Windows
+preparation script and runtime also enforce FIFO for old configurations, inherited
+environment variables and direct launches. FIFO Relaxed is not used for these modes.
+Unlimited follows the current monitor's refresh; 120 FPS follows the lower of
+120 and that refresh. Refresh is read on the SDL window thread, retaining fractional
+rates and updating on display/mode changes. The selected Vulkan present mode is
+logged after fallback only when Frame Statistics is enabled. Frame throughput in a log is not a measurement of which
+frames Mailbox displayed, and shader compilation/loading spikes remain distinct
+from this presentation policy.
 The present limiter also covers repeated/blank frames. It retains the scheduled
 deadline phase across ordinary Windows wake delays, avoiding accumulated drift
 below the selected rate. A delay of half a frame or more starts a new phase with
