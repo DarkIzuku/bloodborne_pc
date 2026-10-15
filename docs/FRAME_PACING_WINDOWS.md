@@ -19,6 +19,8 @@ The present limiter also covers repeated/blank frames. It retains the scheduled
 deadline phase across ordinary Windows wake delays, avoiding accumulated drift
 below the selected rate. A delay of half a frame or more starts a new phase with
 a full frame period; overdue frames never trigger a burst of catch-up work.
+The immediate-flip vblank loop retains this phase as well, so a producer waiting
+on guest vblank events does not inherit a lower cadence from repeated late wakes.
 Frame queue ownership/backpressure and GPU synchronization
 remain unchanged. A continuously nonempty flip queue still returns at every
 vblank deadline: condition-variable predicates otherwise bypass an expired

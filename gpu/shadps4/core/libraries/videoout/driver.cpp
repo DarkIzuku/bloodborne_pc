@@ -812,6 +812,8 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
     // until its slot. Title/loading guards and actual display refresh may change at runtime.
     const u32 frame_limit = EmulatorSettings.GetFrameLimit();
     BbFramePacing::Limiter limiter;
+    BbFramePacing::Limiter vblank_limiter;
+    vblank_limiter.Configure(vblank_period, std::chrono::steady_clock::now());
     std::chrono::nanoseconds logged_period{-1};
     const auto update_limit = [&] {
 #ifdef _WIN32
@@ -848,7 +850,10 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
 
     while (!token.stop_requested()) {
         timer.Start();
-        const auto tick_deadline = std::chrono::steady_clock::now() + vblank_period;
+        // Vblank wakes must retain their phase too: a producer waiting for
+        // vblank cannot reach 60 FPS if each event accumulates timer overshoot.
+        vblank_limiter.Presented(std::chrono::steady_clock::now());
+        const auto tick_deadline = vblank_limiter.Next();
 
         if (DebugState.IsGuestThreadsPaused()) {
             update_limit();

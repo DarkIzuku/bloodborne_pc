@@ -75,6 +75,25 @@ int main() {
     }
     std::puts("PASS: wake overshoot preserves nominal FPS; stalls rephase without catch-up");
 
+    // A producer may wait for one vblank before submitting every frame. Both
+    // clocks need a stable phase; fixing only presentation still leaves this
+    // producer limited by the drifting event cadence.
+    Limiter vblank, output;
+    vblank.Configure(tick, zero);
+    output.Configure(tick, zero);
+    vblank.Presented(zero);
+    output.Presented(zero);
+    for (int frame = 1; frame <= 10000; ++frame) {
+        const auto wake = vblank.Next() + 900us;
+        vblank.Presented(wake);
+        const auto present = wake + 100us;
+        assert(output.Due(present));
+        output.Presented(present);
+        assert(vblank.Next() == zero + tick * (frame + 1));
+        assert(output.Next() == vblank.Next());
+    }
+    std::puts("PASS: vblank-driven frame producer retains nominal 60 FPS cadence");
+
     std::vector<std::uint8_t> image(0x5580e40);
     std::array<std::uint8_t,25> bytes={0x48,0x8b,0x05,0xd1,0xe1,0x9c,0x03,0x48,0x85,0xc0,0x74,0x0b,0x80,0xb8,0x11,0x0b,0x00,0x00,0x00,0x0f,0x94,0xc0,0xc3,0x31,0xc0};
     std::memcpy(image.data()+0x1bb2c60,bytes.data(),bytes.size());
