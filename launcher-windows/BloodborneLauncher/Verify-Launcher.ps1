@@ -183,8 +183,8 @@ static class Program
         Call("LoadState"); Call("ApplyStateToUi");
         Check(Tag("UpscalerCombo")=="fsr411" && Tag("FpsCombo")=="90" && Tag("PresetCombo")=="3","Settings reload");
         Check(Get<ComboBox>("QuickUpscaler").SelectedIndex==1 && Get<ComboBox>("QuickFps").SelectedIndex==2,"Quick settings reload");
-        Check(Get<ComboBox>("FpsCombo").Items.Count==3 && Get<ComboBox>("QuickFps").Items.Count==3,"Only supported FPS presets");
-        foreach(string legacy in new[]{"uncap","Unlimited","0","480","bad"}) {
+        Check(Get<ComboBox>("FpsCombo").Items.Count==5 && Get<ComboBox>("QuickFps").Items.Count==5,"Only supported FPS presets");
+        foreach(string legacy in new[]{"Unlimited","0","480","bad"}) {
             string saved=File.ReadAllText(Path.Combine(root,"launcher-settings.json"));
             File.WriteAllText(Path.Combine(root,"launcher-settings.json"),saved.Replace("\"Fps\": \"90\"","\"Fps\": \""+legacy+"\""));
             Call("LoadState"); Call("ApplyStateToUi");
@@ -194,6 +194,12 @@ static class Program
                 Check(migrated.RootElement.GetProperty("Fps").GetString()=="60","Persist FPS migration "+legacy);
             File.WriteAllText(Path.Combine(root,"launcher-settings.json"),saved);
         }
+        foreach(string fps in new[]{"30","60","90","120","uncap"}) {
+            Select("FpsCombo",fps); Call("SaveSettings"); Call("LoadState"); Call("ApplyStateToUi");
+            Check(Tag("FpsCombo")==fps,"Persist FPS "+fps);
+            Check(Get<ComboBox>("QuickFps").SelectedIndex==Array.IndexOf(new[]{"30","60","90","120","uncap"},fps),"Quick FPS "+fps);
+        }
+        Select("FpsCombo","90"); Call("SaveSettings");
         Check(Get<CheckBox>("ChangeAppearanceCheck").IsChecked==true,"Mirror option reload");
         string mirrorIni=File.ReadAllText(Path.Combine(root,"bbport.ini"));
         File.WriteAllText(Path.Combine(root,"bbport.ini"),mirrorIni.Replace("change_appearance=1","change_appearance=0"));
