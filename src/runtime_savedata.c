@@ -284,7 +284,15 @@ static ABI int32_t save_search(const SearchCond *cond, SearchResult *result) {
         size_t n=strlen(e->d_name);
         if (e->d_name[0]=='.' || n>=32 || (n>8 && !strcmp(e->d_name+n-8,".sce_sys"))) continue;
         if (cond->dir && cond->dir->data[0] && !like(e->d_name,cond->dir->data)) continue;
-        if (count==capacity) { capacity=capacity ? capacity*2 : 16; entries=realloc(entries,capacity*sizeof(*entries)); }
+        if (count==capacity) {
+            if (capacity>SIZE_MAX/sizeof(*entries)/2) {
+                closedir(d); free(entries); return ERR_INTERNAL;
+            }
+            const size_t next_capacity=capacity ? capacity*2 : 16;
+            Entry *next=realloc(entries,next_capacity*sizeof(*entries));
+            if (!next) { closedir(d); free(entries); return ERR_INTERNAL; }
+            entries=next; capacity=next_capacity;
+        }
         snprintf(entries[count].name,32,"%s",e->d_name);
         char meta[680]; snprintf(meta,sizeof(meta),"%s/%s.sce_sys",base,e->d_name);
         read_param(meta,&entries[count].param);
