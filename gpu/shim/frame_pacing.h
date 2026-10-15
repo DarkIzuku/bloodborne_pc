@@ -28,7 +28,8 @@ inline std::chrono::nanoseconds Period(std::uint32_t requested_fps, Scene scene,
                      : std::chrono::nanoseconds::zero();
 }
 
-// One owner, the present thread. A missed slot never creates a burst of catch-up frames.
+// One owner, the present thread. Keep the slot phase across ordinary timer wake
+// overshoot; reset it after a stall instead of submitting catch-up frames.
 class Limiter {
 public:
     using Clock = std::chrono::steady_clock;
@@ -40,7 +41,19 @@ public:
     }
     bool Due(Time now) const { return !period_.count() || now >= next_; }
     Time Next() const { return next_; }
-    void Presented(Time now) { last_ = now; have_frame_ = true; next_ = now + period_; }
+    void Presented(Time now) {
+        if (!have_frame_ || !period_.count() || now < next_ ||
+            now - next_ >= period_ / 2) {
+            next_ = now + period_;
+        } else {
+            // Reusing now here accumulates every scheduler wake delay and can
+            // reduce a 60 FPS limit to roughly 57 FPS on Windows. Retain the
+            // deadline phase only while at least half a frame remains ahead.
+            next_ += period_;
+        }
+        last_ = now;
+        have_frame_ = true;
+    }
 private:
     std::chrono::nanoseconds period_{};
     Time next_{}, last_{};

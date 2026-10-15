@@ -15,8 +15,11 @@ Unlimited means no gameplay software cap with Mailbox/Immediate. FIFO and FIFO
 Relaxed additionally cap production to the current monitor's refresh, read on the
 SDL window thread (fractional rates retained, refreshed on display/mode changes).
 The actual Vulkan mode, including unsupported-mode fallback, controls this rule.
-The present limiter also covers repeated/blank frames and does not catch up with
-bursts after stalls. Frame queue ownership/backpressure and GPU synchronization
+The present limiter also covers repeated/blank frames. It retains the scheduled
+deadline phase across ordinary Windows wake delays, avoiding accumulated drift
+below the selected rate. A delay of half a frame or more starts a new phase with
+a full frame period; overdue frames never trigger a burst of catch-up work.
+Frame queue ownership/backpressure and GPU synchronization
 remain unchanged. A continuously nonempty flip queue still returns at every
 vblank deadline: condition-variable predicates otherwise bypass an expired
 wait_until deadline and can starve guest vblank events in uncapped mode.
@@ -43,7 +46,8 @@ pace and the checked timing/job corrections above; they require gameplay testing
 
 ## Verification
 
-Automated checks cover 100000 paced frames, stalls, transitions, inventory
+Automated checks cover 100000 paced frames, repeated late timer wakes at 30, 60,
+90, 120 and fractional monitor rates, stalls, transitions, inventory
 exclusion, fractional display refresh, invalid state/identity, patch prerequisites,
 120/uncapped targets and measured-step addresses, launcher persistence and launch
 environment. The new timing instructions also match the actual supported 1.09 ELF.

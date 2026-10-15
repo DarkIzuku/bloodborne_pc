@@ -47,6 +47,34 @@ int main() {
     for(int i=0;i<100000;i++) {auto now=zero+12s+tick*i;assert(l.Due(now));l.Presented(now);assert(!l.Due(now+1ns));}
     std::puts("PASS: limits, fractional VSync, no catch-up and 100000 paced frames");
 
+    // Windows can wake a little after every deadline. Advancing from each wake
+    // instead of the scheduled slot turns a 60 FPS cap into about 57 FPS.
+    for (double fps : {30.0, 60.0, 90.0, 120.0, 143.856}) {
+        const auto period = Period(0, Scene::Gameplay, true, fps);
+        Limiter paced;
+        paced.Configure(period, zero);
+        paced.Presented(zero);
+        for (int frame = 1; frame <= 10000; ++frame) {
+            const auto wake_delay = (frame % 3 == 0 ? 1300us : 900us);
+            const auto scheduled = zero + period * frame;
+            const auto wake = scheduled + wake_delay;
+            assert(paced.Next() == scheduled);
+            assert(!paced.Due(scheduled - 1ns) && paced.Due(wake));
+            paced.Presented(wake);
+            assert(paced.Next() == scheduled + period);
+            assert(!paced.Due(wake));
+        }
+        // A stall must discard timing debt rather than emit catch-up frames.
+        const auto late = paced.Next() + 250ms;
+        paced.Presented(late);
+        assert(paced.Next() == late + period);
+        assert(!paced.Due(late + period - 1ns));
+        const auto half_frame_late = paced.Next() + period / 2;
+        paced.Presented(half_frame_late);
+        assert(paced.Next() == half_frame_late + period);
+    }
+    std::puts("PASS: wake overshoot preserves nominal FPS; stalls rephase without catch-up");
+
     std::vector<std::uint8_t> image(0x5580e40);
     std::array<std::uint8_t,25> bytes={0x48,0x8b,0x05,0xd1,0xe1,0x9c,0x03,0x48,0x85,0xc0,0x74,0x0b,0x80,0xb8,0x11,0x0b,0x00,0x00,0x00,0x0f,0x94,0xc0,0xc3,0x31,0xc0};
     std::memcpy(image.data()+0x1bb2c60,bytes.data(),bytes.size());
