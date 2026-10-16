@@ -161,6 +161,8 @@ static class Program
         }
         ClickNav("Graphics");
         var upscaler = Get<ComboBox>("UpscalerCombo");
+        // A dropdown in an inactive window closes at once; on a desktop another window holds focus.
+        window.Activate(); Pump();
         upscaler.IsDropDownOpen = true; Pump(); window.UpdateLayout();
         var popup = (System.Windows.Controls.Primitives.Popup)upscaler.Template.FindName("PART_Popup",upscaler);
         Check(popup.IsOpen && popup.Child != null,"Styled dropdown opens");
