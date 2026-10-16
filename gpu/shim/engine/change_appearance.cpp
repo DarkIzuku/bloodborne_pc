@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The editor controller/refcount lifecycle is adapted from bbhost, not the GPU renderer.
 #include "engine_hooks.h"
+#include "../frame_pacing.h"
 #include "camera.h"
 #include "widescreen.h"
 #include "../input/input.h"
@@ -164,6 +165,8 @@ std::int64_t __attribute__((sysv_abi)) FrameHook(std::uint64_t, const std::uint6
 } // namespace
 
 void Install(std::uint8_t* image, std::size_t size) {
+    // Always independent of the optional PC input/camera/editor features.
+    BbFramePacing::Initialize(image, size, std::getenv("BB_ENGINE_IMAGE_SHA256"));
     const char* asset = std::getenv("BB_DREAM_MIRROR_ASSET");
     const char* identity = std::getenv("BB_ENGINE_IMAGE_SHA256");
     const bool mirror = asset && *asset;

@@ -89,16 +89,20 @@ def settings_value(config, key):
 
 
 def configure_frame_rate(env):
-    """Windows supports the tested fixed-timestep presets, including old config migration.
+    """Resolve gameplay pace; the runtime independently limits title/loading frames to 60.
 
-    Explicit limits also override inherited BB_VBLANK_HZ=0 / BB_FPS_LIMIT=0 so a
-    legacy uncapped launch cannot saturate the desktop during menus or loading.
+    Override inherited raw limits so launcher settings remain authoritative.
     """
     fps = env.get('BB_FPS', '60')
-    if fps not in ('30', '60', '90'):
+    if fps not in ('30', '60', '90', '120', 'uncap'):
         print(f'Unsupported Windows FPS preset {fps!r}; using 60 FPS.', flush=True)
         fps = '60'
-    env.update(BB_FPS=fps, BB_FPS_LIMIT=fps, BB_VBLANK_HZ='90' if fps == '90' else '60')
+    env.update(BB_FPS=fps, BB_FPS_LIMIT='0' if fps == 'uncap' else fps,
+               BB_VBLANK_HZ='480' if fps == 'uncap' else fps if fps in ('90','120') else '60')
+    if fps in ('120', 'uncap'):
+        env['BB_PRESENT_MODE'] = 'Fifo'
+        if env.get('BB_FRAME_STATS', '')[:1] in ('1', 'y', 't'):
+            print(f'Presentation: {fps} uses FIFO (VSync).', flush=True)
     return fps
 
 
@@ -139,15 +143,10 @@ def main():
                        '--enabled', os.environ.get('BB_MODS_ENABLED', '1')], capture=True))
     overlay = merged if merged.resolve() != original else None
     try:
-        import prepare_stamp
-        sku = os.environ.get('BB_CONTENT_SKU', 'full')
-        if prepare_stamp.unchanged(merged, out, sku):
-            print('Prepared image is current (BB_FORCE_PREPARE=1 rebuilds it)', flush=True)
-        else:
-            for script, extra in (('prepare.py', []), ('link_libc.py', []), ('link_modules.py', []),
-                                  ('content_profile.py', ['--sku', sku])):
-                run([PYTHON, SCRIPTS / script, merged, '--out', out, *extra])
-            prepare_stamp.write(merged, out, sku)
+        from prepare_cache import prepare_game
+        prepare_game(merged, out, lambda script, *args: run([PYTHON, SCRIPTS / script, *args]))
+        run([PYTHON, SCRIPTS / 'content_profile.py', merged, '--out', out,
+             '--sku', os.environ.get('BB_CONTENT_SKU', 'full')])
         prebuilt = os.environ.get('BB_PREBUILT') == '1'
         if not prebuilt:
             build()
@@ -184,6 +183,13 @@ def main():
         if os.environ.get('BB_AUTO_RENDER_RES') == '1':
             for key in ('BB_RENDER_RES', 'BB_OUTPUT_RES', 'BB_AUTO_RENDER_RES'):
                 os.environ.pop(key, None)
+        # The front-end FPS guard must not depend on optional editor/input/menu features.
+        if 'BB_ENGINE_IMAGE_SHA256' not in os.environ:
+            try:
+                from engine_assets import verify_executable
+                os.environ['BB_ENGINE_IMAGE_SHA256'] = verify_executable(out / 'eboot.elf')
+            except (OSError, ValueError, IndexError, struct.error) as error:
+                print(f'Frame pacing: unknown executable; retaining safe menu ceiling: {error}', flush=True)
         fps = configure_frame_rate(os.environ)
         scaled_render = scaled_output = None
         if not os.environ.get('BB_RENDER_RES'):

@@ -13,6 +13,7 @@
 #endif
 #ifdef _WIN32
 #include <windows.h>
+#include "crash_win.h"
 #include <timeapi.h>
 #include <process.h>
 #include <psapi.h>
@@ -236,7 +237,16 @@ static __attribute__((noreturn)) void terminate(unsigned code) {
 }
 static void report_exception(EXCEPTION_POINTERS *e) {
     static volatile LONG reporting;
-    if (InterlockedExchange(&reporting, 1)) { Sleep(INFINITE); }
+    DWORD reporter = GetCurrentThreadId();
+    LONG owner = InterlockedCompareExchange(&reporting, (LONG)reporter, 0);
+    if (owner) {
+        /* The native unwinder can fault again on a corrupt guest stack. Never
+         * wait forever on our own report, or replace the original fatal exit.
+         * The minidump has already completed (or reached its bounded timeout). */
+        if ((DWORD)owner != reporter) Sleep(3000);
+        TerminateProcess(GetCurrentProcess(), 128 + 11);
+        _exit(128 + 11);
+    }
     EXCEPTION_RECORD *r = e->ExceptionRecord;
     CONTEXT *c = e->ContextRecord;
     char where[512];
@@ -266,7 +276,13 @@ static void report_exception(EXCEPTION_POINTERS *e) {
     }
     /* The host call chain from unwind data (the rbp chain above often stops in host code). */
     void *frames[48];
-    USHORT depth = RtlCaptureStackBackTrace(0, 48, frames, NULL);
+    SYSTEM_INFO system;
+    GetSystemInfo(&system);
+    /* RtlCaptureStackBackTrace may traverse the interrupted guest frame on
+     * Windows Server. A noncanonical RBP is not usable unwind metadata. The
+     * original CPU context remains in the minidump and the text above. */
+    USHORT depth = c->Rbp <= (DWORD64)(uintptr_t)system.lpMaximumApplicationAddress ?
+        RtlCaptureStackBackTrace(0, 48, frames, NULL) : 0;
     for (USHORT i = 0; i < depth; ++i) {
         describe(where, sizeof(where), (uintptr_t)frames[i]);
         fprintf(stderr, "  host #%u %s\n", i, where);
@@ -460,10 +476,12 @@ static LONG CALLBACK vectored_handler(EXCEPTION_POINTERS *e) {
     }
     /* Host code may handle its own exceptions (drivers probe memory under __try). */
     if (!fatal(r->ExceptionCode) || !guest_address((uintptr_t)e->ContextRecord->Rip)) return EXCEPTION_CONTINUE_SEARCH;
+    crash_win_dump(e);
     report_exception(e);
     terminate(128 + 11);
 }
 static LONG WINAPI unhandled_filter(EXCEPTION_POINTERS *e) {
+    crash_win_dump(e);
     report_exception(e);
     terminate(128 + 11);
 }
@@ -668,6 +686,7 @@ static int main_argc;
 static char **main_argv;
 static unsigned __stdcall loader_thread(void *unused) { (void)unused; return (unsigned)loader_main(main_argc, main_argv); }
 int main(int argc, char **argv) {
+    crash_win_init();
     timeBeginPeriod(1); /* 1 ms waits for timed locks and sleeps outside runtime_sleep_ns */
     /* No EcoQoS: Windows 11 otherwise moves the threads of an unfocused window to efficiency
      * cores (hybrid CPUs), and the GPU command thread sets the frame rate. */
@@ -854,6 +873,7 @@ int main(int argc, char **argv) {
     image = allocate(round_page(size));
 #ifdef _WIN32
     image_size = round_page(size);
+    crash_win_set_guest(image, image_size);
 #endif
     if (fread(image, 1, size, f) != size || fgetc(f) != EOF) fail("incorrect memory image size");
     fclose(f);

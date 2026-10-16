@@ -802,46 +802,6 @@ void RewriteHostHeader(SendRequestPlan& plan) {
     }
 }
 
-bool ApplyBloodborneSeamlessRoute(SendRequestPlan& plan) {
-    if (!EnvFlagEnabled("SHADPS4_BLOODBORNE_SEAMLESS_COOP") ||
-        !EmulatorSettings.IsShadNetEnabled() || !IsBloodborneSummonPath(plan.path)) {
-        return false;
-    }
-
-    const std::string base_url = EmulatorSettings.GetShadNetWebApiServer();
-    const HostOverrideTarget target = ParseHostOverrideTarget(base_url);
-    if (target.host.empty()) {
-        LOG_WARNING(Lib_Http,
-                    "Bloodborne seamless route requested, but shadNet WebAPI server is empty");
-        return false;
-    }
-
-    const std::string old_scheme = plan.scheme;
-    const std::string old_host = plan.host;
-    const u16 old_port = plan.port;
-
-    if (!target.scheme.empty()) {
-        plan.scheme = target.scheme;
-    }
-    plan.host = target.host;
-    if (target.port != 0) {
-        plan.port = target.port;
-    } else if (plan.scheme != old_scheme) {
-        plan.port = (plan.scheme == "https") ? 443 : 80;
-    }
-    RewriteHostHeader(plan);
-    plan.headers.emplace_back("X-ShadPS4-Bloodborne-Seamless", "1");
-    if (IsBloodborneSummonRequestPath(plan.path) || IsBloodborneSummonSearchPath(plan.path)) {
-        if (const auto placement = Core::Bloodborne::GetSeamlessHostPlacementHeader()) {
-            plan.headers.emplace_back(BloodborneHostPlacementHeader, *placement);
-        }
-    }
-
-    LOG_INFO(Lib_Http, "Bloodborne seamless route active: {}://{}:{}{} -> {}://{}:{}{}", old_scheme,
-             old_host, old_port, plan.path, plan.scheme, plan.host, plan.port, plan.path);
-    return true;
-}
-
 // 303 changes the new method to GET unless original was HEAD
 // Every other followable status preserves the original method.
 s32 MethodAfterRedirect(int status, s32 original_method) {
@@ -1777,7 +1737,6 @@ int PS4_SYSV_ABI sceHttpSendRequest(int reqId, const void* postData, u64 size) {
         }
     }
 
-    ApplyBloodborneSeamlessRoute(plan);
 
     const bool online = EmulatorSettings.IsConnectedToNetwork();
     LOG_INFO(Lib_Http, "reqId={} dispatched to async worker [{} {} {}://{}:{}{}]", reqId,
@@ -1794,17 +1753,6 @@ int PS4_SYSV_ABI sceHttpSendRequest(int reqId, const void* postData, u64 size) {
             worker_errno = ORBIS_HTTP_ERROR_RESOLVER_ENODNS;
         } else {
             worker_errno = RunRealHttpRequest(plan, local_res, success_event_bits);
-        }
-
-        if (worker_errno == 0 && IsBloodborneSummonPath(plan.path)) {
-            if (const auto placement =
-                    FindResponseHeader(local_res.all_headers_blob, BloodborneHostPlacementHeader);
-                placement.has_value() &&
-                !Core::Bloodborne::SetSeamlessHostPlacementHeader(*placement)) {
-                LOG_WARNING(Lib_Http, "Ignored invalid Bloodborne host-placement header");
-            } else if (!placement.has_value() && IsBloodborneSummonCreatePath(plan.path)) {
-                Core::Bloodborne::ClearSeamlessHostPlacementHeader();
-            }
         }
 
         CaptureBloodborneSummon(plan, local_res, worker_errno);

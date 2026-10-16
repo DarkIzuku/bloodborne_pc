@@ -7,6 +7,7 @@
 #include <string.h>
 #include <vulkan/vulkan.h>
 #include <SDL3/SDL.h>
+#include "../gpu/shim/input/controller_backends.h"
 
 static VkDeviceSize largest_local_heap(VkPhysicalDevice device) {
     VkPhysicalDeviceMemoryProperties memory;
@@ -68,6 +69,7 @@ static int live_resolution_suits(VkPhysicalDevice device) {
 }
 
 static int list_gamepads(void) {
+    bb_controller_backends();
     if (!SDL_Init(SDL_INIT_GAMEPAD)) {
         fprintf(stderr, "gamepads: %s\n", SDL_GetError());
         return 1;
@@ -94,6 +96,7 @@ static int list_gamepads(void) {
  * (lefttrigger/righttrigger for the triggers) for the first key or gamepad button pressed, the
  * names bbport.ini's key.* and pad.* lines take. Escape, closing it or 15 s: nothing. */
 static int read_input(const char *kind) {
+    bb_controller_backends();
     const int want_key = strcmp(kind, "pad") != 0, want_pad = strcmp(kind, "key") != 0;
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
         fprintf(stderr, "read-input: %s\n", SDL_GetError());

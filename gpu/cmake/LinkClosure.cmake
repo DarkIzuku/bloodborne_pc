@@ -7,7 +7,9 @@ function(_bb_link_closure_visit item)
     if (item MATCHES "^\\$<LINK_ONLY:(.*)>$")
         set(item "${CMAKE_MATCH_1}")
     endif()
-    if (item STREQUAL "" OR item MATCHES "^\\$<")
+    # CMake wraps cross-directory target_link_libraries entries in ::@(id)/::@
+    # scope markers. They are not libraries and must never reach the C linker.
+    if (item STREQUAL "" OR item MATCHES "^\\$<" OR item MATCHES "^::@")
         return()
     endif()
     if (TARGET "${item}")

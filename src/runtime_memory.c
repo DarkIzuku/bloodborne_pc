@@ -124,7 +124,9 @@ static GpuRange hook_map, hook_unmap, hook_invalidate;
 static GpuRange hook_note_write; /* bbport: data written into GPU memory (runtime_memory_note_write) */
 enum { HOOK_MAP, HOOK_UNMAP, HOOK_INVALIDATE };
 typedef struct { int kind; uintptr_t address; uint64_t size; } PendingHook;
-static PendingHook pending[64]; static size_t pending_count;
+/* A batch can span more than 64 views. Owned by the region-table write lock;
+ * flushing copies one value before releasing it, never retaining array pointers. */
+static PendingHook *pending; static size_t pending_count, pending_capacity;
 static size_t allocations, maps, flexible_maps, protects, queries;
 static uint64_t live_bytes, flexible_bytes;
 
@@ -270,7 +272,15 @@ static void zero_phys(uint64_t phys, uint64_t size) { punch(phys,size); }
 static void queue_hook(int kind, uintptr_t address, uint64_t size) {
     GpuRange hook = kind==HOOK_MAP ? hook_map : kind==HOOK_UNMAP ? hook_unmap : hook_invalidate;
     if (!hook) return;
-    if (pending_count==sizeof(pending)/sizeof(*pending)) { fputs("STOP: GPU hook queue overflow\n",stderr); exit(21); }
+    if (pending_count==pending_capacity) {
+        if (pending_capacity > SIZE_MAX / sizeof(*pending) / 2) {
+            fputs("STOP: GPU notification capacity overflow\n",stderr); exit(21);
+        }
+        size_t capacity=pending_capacity ? pending_capacity*2 : 64;
+        PendingHook *next=realloc(pending,capacity*sizeof(*pending));
+        if (!next) { fputs("STOP: GPU notification allocation failed\n",stderr); exit(21); }
+        pending=next; pending_capacity=capacity;
+    }
     pending[pending_count++]=(PendingHook){kind,address,size};
 }
 /* Runs queued GPU notifications; callers invoke it after dropping the lock. */
@@ -506,10 +516,15 @@ static ABI int32_t direct_unmap(void *address, uint64_t size) {
     /* The GPU forgets the range before it disappears (as shadPS4's early GPU unmap). */
     if (hook_unmap && !((uintptr_t)address%PAGE) && size) hook_unmap((uintptr_t)address,align_up(size,PAGE));
     write_lock();
-    size_t before=pending_count;
+    size_t before=pending_count, kept=before;
     int32_t result=unmap_locked((uintptr_t)address,size);
-    pending_count=before; /* already notified above */
+    /* Only suppress UNMAP, already sent above. On Windows, splitting a section
+     * remaps surviving views and removes their GPU protection: keep INVALIDATE. */
+    for (size_t i=before;i<pending_count;++i)
+        if (pending[i].kind!=HOOK_UNMAP) pending[kept++]=pending[i];
+    pending_count=kept;
     write_unlock();
+    flush_hooks();
     return result;
 }
 static ABI int32_t direct_release(uint64_t start, uint64_t size) {

@@ -33,6 +33,17 @@ int main() {
 
     BbSettings::Load();
     auto& s = BbSettings::Get();
+    for(int model:BbSettings::DlssPresets) {
+        assert(BbSettings::ParseDlssPreset(BbSettings::DlssPresetName(model))==model);
+        assert(BbSettings::ParseDlssPreset(std::to_string(model))==model);
+        s.dlss_preset=model;
+        s.preset=BbSettings::Balanced;
+        BbSettings::Save(); s.dlss_preset=0; BbSettings::Load();
+        assert(s.dlss_preset==model && s.preset==BbSettings::Balanced);
+    }
+    assert(BbSettings::ParseDlssPreset("  m ")==13);
+    for(const char* bad:{"7","8","9","14","15","-1","11x","unknown"})
+        assert(BbSettings::ParseDlssPreset(bad)==0);
     assert(s.upscaler == BbSettings::UpscalerFsr3 && !s.show_fps && s.menu_x < 0.0f);
     s.show_fps = true;
     s.upscaler = BbSettings::UpscalerFsr411;

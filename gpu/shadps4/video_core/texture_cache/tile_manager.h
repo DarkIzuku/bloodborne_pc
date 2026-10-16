@@ -46,6 +46,8 @@ public:
                          Vulkan::Runtime& runtime, StreamBuffer& stream_buffer);
     ~TileManager();
 
+    void TileImageOver(Image& image, std::span<vk::BufferImageCopy> copies,
+                       const Buffer* buffer, u64 offset);
     void TileImage(Image& in_image, std::span<vk::BufferImageCopy> buffer_copies,
                    const VideoCore::Buffer* out_buffer, u64 out_offset);
 

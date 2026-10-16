@@ -19,7 +19,7 @@ void runtime_file_unmount(const char*) {}
 __thread RuntimeRecoverBuf* runtime_fault_recover = nullptr;
 int runtime_setjmp(RuntimeRecoverBuf*) { return 0; }
 [[noreturn]] void runtime_longjmp(RuntimeRecoverBuf*) { std::abort(); }
-uint32_t runtime_disabled_optimizations = 0;
+uint64_t runtime_disabled_optimizations = 0;
 uint64_t runtime_experiment_bits = 0;
 uint64_t runtime_tsc_frequency() { return 1000000000; }
 int runtime_file_translate(const char*, char*, size_t) { std::abort(); }
@@ -32,6 +32,7 @@ void runtime_thread_attach_host(const char*) {}
 int32_t runtime_thread_spawn(void**, void* (*)(void*), void*, uint64_t, const char*) { std::abort(); }
 int32_t runtime_thread_join_spawned(void*, void**) { std::abort(); }
 void runtime_memory_gpu_protect(uintptr_t, uint64_t, int, int) { std::abort(); }
+int runtime_trophy(int, const char**, const char**, int*, int*, int64_t*) { std::abort(); }
 void runtime_restart() { std::abort(); }
 uint64_t runtime_process_time_counter() { return runtime_process_time_us() * 1000; }
 int32_t* runtime_errno() { std::abort(); }

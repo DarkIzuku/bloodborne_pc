@@ -21,6 +21,7 @@
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/host_compatibility.h"
+#include "video_core/texture_cache/gc_policy.h"
 #include "video_core/texture_cache/overlap_diagnostics.h"
 #include "video_core/texture_cache/texture_cache.h"
 #include "video_core/texture_cache/tile_manager.h"
@@ -266,6 +267,156 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
                 runtime.GetStagingPool().FreeDeferred(download);
             });
     }
+}
+
+bool TextureCache::WriteBackTiledImage(ImageId image_id) {
+    Image& image = slot_images[image_id];
+    if (False(image.flags & ImageFlagBits::GpuModified)) {
+        return true; // guest memory already holds its contents
+    }
+    const auto& info = image.info;
+    if (!info.props.is_tiled || info.guest_address == 0 || info.guest_size == 0 ||
+        !image.backing || image.backing->image.image_ci.format != info.pixel_format) {
+        return false;
+    }
+    // Only the plain colour surface is rebuilt: compression metadata, depth/stencil, MSAA,
+    // block-compressed, volume and thick-tiled layouts stay resident. So does an image whose
+    // newest contents may be in a reduced-resolution scene proxy (SceneTargets).
+    const auto& meta = info.meta_info;
+    if (meta.cmask_addr || meta.fmask_addr || meta.htile_addr || info.stencil_addr ||
+        info.props.is_depth || info.props.has_stencil || info.props.is_block ||
+        info.props.is_volume || info.num_samples != 1 || image.scene_proxy ||
+        image.aspect_mask != vk::ImageAspectFlags{vk::ImageAspectFlagBits::eColor} ||
+        AmdGpu::GetMicroTileThickness(info.array_mode) != 1) {
+        return false;
+    }
+    switch (info.num_bits) {
+    case 8:
+    case 16:
+    case 32:
+    case 64:
+    case 128:
+        break;
+    default:
+        return false; // no tiling shader for it
+    }
+    const u32 bytes_per_texel = info.num_bits / 8;
+    if (info.tile_mode != AmdGpu::TileMode::Thin1DThin &&
+        info.tile_mode != AmdGpu::TileMode::Thin2DThin &&
+        info.tile_mode != AmdGpu::TileMode::Display1DThin &&
+        info.tile_mode != AmdGpu::TileMode::Display2DThin) {
+        return false; // other mode variants have no writeback regression coverage
+    }
+    // The tiling shader runs whole groups of 64 texels over guest_size.
+    if (info.guest_size % (bytes_per_texel * 64) != 0 ||
+        info.guest_size > instance.MaxStorageBufferRange() ||
+        info.guest_size / (bytes_per_texel * 64) > instance.MaxComputeWorkGroupCountX()) {
+        return false;
+    }
+    const u32 levels = info.resources.levels;
+    const u32 layers = info.resources.layers;
+    if (levels > info.mips_layout.size() || layers == 0 ||
+        !GcPolicy::WritebackMipChain(AmdGpu::IsMacroTiled(info.array_mode), levels)) {
+        return false;
+    }
+    // The shader numbers texels mip after mip (x, y, then slice); the copies place mip m at its
+    // offset with rows of `pitch` texels and slices of `height` rows. Both agree, and every byte
+    // of guest_size is produced, only when the mips are contiguous and each is exactly
+    // pitch * height * layers texels.
+    u64 expected_offset = 0;
+    for (u32 mip = 0; mip < levels; ++mip) {
+        const auto& mip_info = info.mips_layout[mip];
+        if (mip_info.pitch == 0 || mip_info.height == 0 || mip_info.pitch % 8 != 0 ||
+            mip_info.height % 8 != 0 || mip_info.offset != expected_offset ||
+            !GcPolicy::FullMip(mip_info.pitch, mip_info.height, layers, bytes_per_texel,
+                               mip_info.size) ||
+            mip_info.size > info.guest_size - expected_offset) {
+            return false;
+        }
+        expected_offset += mip_info.size;
+    }
+    if (expected_offset != info.guest_size) {
+        return false;
+    }
+    auto* const memory = Core::Memory::Instance();
+    const VAddr address = info.guest_address;
+    const u64 size = info.guest_size;
+    // All of the range must be mapped: TryWriteBacking may otherwise store part of it.
+    if (memory->ClampRangeSize(address, size) != size) {
+        return false;
+    }
+    // The buffer cache may hold GPU writes over the range that guest memory has not seen.
+    if (buffer_cache.IsRegionGpuModified(address, size)) {
+        return false;
+    }
+    // Other images over the range: one holding GPU data would be overwritten in guest memory;
+    // the clean ones are invalidated once the write-back has landed.
+    ImageIds overlapping;
+    bool other_gpu_data = false;
+    ForEachImageInRegion(address, size, [&](ImageId other_id, Image& other) {
+        if (other_id == image_id) {
+            return;
+        }
+        if (True(other.flags & ImageFlagBits::GpuModified)) {
+            other_gpu_data = true;
+        }
+        overlapping.push_back(other_id);
+    });
+    if (other_gpu_data) {
+        return false;
+    }
+
+    boost::container::small_vector<vk::BufferImageCopy, 14> copies;
+    for (u32 mip = 0; mip < levels; ++mip) {
+        const auto& mip_info = info.mips_layout[mip];
+        const u32 width = std::max(info.size.width >> mip, 1u);
+        const u32 height = std::max(info.size.height >> mip, 1u);
+        // The inverse of RefreshImage's upload copies.
+        copies.push_back({
+            .bufferOffset = mip_info.offset,
+            .bufferRowLength = mip_info.pitch,
+            .bufferImageHeight = mip_info.height,
+            .imageSubresource{
+                .aspectMask = vk::ImageAspectFlagBits::eColor,
+                .mipLevel = mip,
+                .baseArrayLayer = 0,
+                .layerCount = layers,
+            },
+            .imageOffset = {0, 0, 0},
+            .imageExtent = {std::min(mip_info.pitch, width), std::min(mip_info.height, height), 1},
+        });
+    }
+
+    // A host-visible copy of the guest surface, tiled over on the GPU, then stored back whole.
+    const auto download = runtime.GetStagingPool().Request(
+        size, MemoryType::HostCached, std::max<u64>(instance.StorageMinAlignment(), 16));
+    if (!download.mapped) {
+        return false;
+    }
+    memory->CopySparseMemory(address, download.mapped, size);
+    download.Flush();
+    scheduler.EndRendering();
+    tile_manager.TileImageOver(image, copies, download.buffer, download.offset);
+    runtime.FlushBarriers();
+    // Synchronously, while the image still protects its pages (see GarbageCollectImages).
+    scheduler.Finish();
+    download.Invalidate();
+    BbFreeCheck::Check(address, size, download.mapped, BbFreeCheck::ImageDownload);
+    // False when part of the range lost its mapping meanwhile: the image stays (still the
+    // complete copy), and what was stored is its own data.
+    const bool written =
+        memory->TryWriteBacking(std::bit_cast<u8*>(address), download.mapped, size);
+    // Guest memory changed under the copies made of it, even by a partial store.
+    if (!WriteTracking()) {
+        buffer_cache.InvalidateMemory(address, size);
+    }
+    // As a CPU write over them would: re-uploaded from guest memory at their next use.
+    for (const ImageId other_id : overlapping) {
+        Image& other = slot_images[other_id];
+        other.flags |= ImageFlagBits::CpuDirty;
+        UntrackImage(other_id);
+    }
+    return written;
 }
 
 void TextureCache::DumpImagesAt(VAddr address, const char* dir) {
@@ -1167,6 +1318,14 @@ void TextureCache::UntrackImageTail(ImageId image_id) {
 }
 
 void TextureCache::GarbageCollectImages() {
+    static const bool fixed_budget = [] {
+        const char* env = std::getenv("BB_GC_BUDGET_MB");
+        return env && std::strtoull(env, nullptr, 10) != 0;
+    }();
+    if (gc_base_pressure == 0) {
+        gc_base_pressure = pressure_gc_memory;
+        gc_base_critical = critical_gc_memory;
+    }
     if (instance.CanReportMemoryUsage()) {
         total_used_memory = instance.GetDeviceMemoryUsage();
         // bbport: on integrated GPUs (Steam Deck) the usage covers system-memory heaps holding
@@ -1203,6 +1362,14 @@ void TextureCache::GarbageCollectImages() {
         BbStats::coarse_second.store(u32(second), std::memory_order_relaxed);
         gc_tick_at_second[second % gc_tick_at_second.size()] = gc_tick;
     }
+    if (!instance.IsIntegrated() && !fixed_budget && second != gc_budget_second) {
+        gc_budget_second = second;
+        const u64 budget = instance.GetDeviceMemoryBudgetNow();
+        // Do not repeatedly evict textures to meet an obsolete startup budget.
+        pressure_gc_memory = GcPolicy::Pressure(gc_base_pressure, budget);
+        critical_gc_memory = std::max(gc_base_critical,
+            budget / 10 * 9 + (budget % 10) * 9 / 10);
+    }
     if (BbToggle::Disabled(BbToggle::TextureCollector)) {
         return;
     }
@@ -1236,6 +1403,11 @@ void TextureCache::GarbageCollectImages() {
         visited = 0;
     };
 
+    static const bool tiled_writeback = [] {
+        const char* e = std::getenv("BB_IMAGE_WRITEBACK_GC");
+        return !e || e[0] != '0';
+    }();
+    unsigned tiled_writebacks = 0;
     const auto clean_up = [&](ImageId image_id) {
         if (num_deletions == 0 || ++visited > 256) {
             return true;
@@ -1243,17 +1415,41 @@ void TextureCache::GarbageCollectImages() {
         auto& image = slot_images[image_id];
         const bool download = image.SafeToDownload();
         const bool tiled = image.info.IsTiled();
-        // bbport: images that cannot go now (GPU-written: their contents exist only here, and
-        // tiled ones cannot be written back at all) neither use up the deletions nor stay first
+        const u64 recent_tick = gc_submit_ticks[(gc_tick - std::min<u64>(gc_tick, 48)) % gc_submit_ticks.size()];
+        if ((image.tick_accessed_last != 0 && (gc_tick < 48 || image.tick_accessed_last >= recent_tick)) ||
+            !GcPolicy::CompletedUse(image.tick_accessed_last, scheduler.CurrentTick(),
+                                   scheduler.IsFree(image.tick_accessed_last))) {
+            lru_cache.Touch(image.lru_id, gc_tick);
+            return false;
+        }
+
+        // Images whose GPU contents cannot be safely written back neither use up the
+        // deletions nor stay first
         // in line. The oldest ten being such render targets stopped the collector for good, and
         // VRAM grew with every area visited up to the pressure mark (~10 GB on 16 GB).
-        if ((tiled && download) || (download && !pressured)) {
+        if ((download && !pressured)) {
             lru_cache.Touch(image.lru_id, gc_tick);
             BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
+        bool written_back = false;
+        if (tiled && download) {
+            // One costly writeback per collector pass, with bounded retries.
+            if (!tiled_writeback || tiled_writebacks || gc_tick < image.writeback_retry_tick) {
+                lru_cache.Touch(image.lru_id, gc_tick);
+                return false;
+            }
+            ++tiled_writebacks;
+            if (!WriteBackTiledImage(image_id)) {
+                image.writeback_retry_tick = gc_tick + 600;
+                lru_cache.Touch(image.lru_id, gc_tick);
+                return false;
+            }
+            written_back = true;
+            ++gc_downloads;
+        }
         --num_deletions;
-        if (download) {
+        if (download && !written_back) {
             // bbport: synchronously, while the image still protects its pages. A deferred
             // write-back landed after FreeImage had unprotected them, over whatever the game
             // had meanwhile stored there (e.g. its heap after unloading an area).
@@ -1342,6 +1538,7 @@ void TextureCache::GarbageCollectSamplers() {
 }
 
 void TextureCache::RunGarbageCollector() {
+    gc_submit_ticks[gc_tick % gc_submit_ticks.size()] = scheduler.CurrentTick();
     SCOPE_EXIT {
         ++gc_tick;
     };

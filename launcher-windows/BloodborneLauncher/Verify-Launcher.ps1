@@ -188,8 +188,8 @@ static class Program
         Call("LoadState"); Call("ApplyStateToUi");
         Check(Tag("UpscalerCombo")=="fsr411" && Tag("FpsCombo")=="90" && Tag("PresetCombo")=="3","Settings reload");
         Check(Get<ComboBox>("QuickUpscaler").SelectedIndex==1 && Get<ComboBox>("QuickFps").SelectedIndex==2,"Quick settings reload");
-        Check(Get<ComboBox>("FpsCombo").Items.Count==3 && Get<ComboBox>("QuickFps").Items.Count==3,"Only supported FPS presets");
-        foreach(string legacy in new[]{"uncap","Unlimited","0","480","bad"}) {
+        Check(Get<ComboBox>("FpsCombo").Items.Count==5 && Get<ComboBox>("QuickFps").Items.Count==5,"Only supported FPS presets");
+        foreach(string legacy in new[]{"Unlimited","0","480","bad"}) {
             string saved=File.ReadAllText(Path.Combine(root,"launcher-settings.json"));
             File.WriteAllText(Path.Combine(root,"launcher-settings.json"),saved.Replace("\"Fps\": \"90\"","\"Fps\": \""+legacy+"\""));
             Call("LoadState"); Call("ApplyStateToUi");
@@ -205,6 +205,40 @@ static class Program
         Check(Get<TextBox>("PathBox").Text==game && Get<TextBlock>("FooterMessage").Text.Contains("backup"),"Damaged settings load the backup");
         File.WriteAllText(Path.Combine(root,"launcher-settings.json"),goodSettings);
         Call("LoadState"); Call("ApplyStateToUi");
+        foreach(string fps in new[]{"30","60","90","120","uncap"}) {
+            Select("FpsCombo",fps); Call("SaveSettings"); Call("LoadState"); Call("ApplyStateToUi");
+            Check(Tag("FpsCombo")==fps,"Persist FPS "+fps);
+            Check(Get<ComboBox>("QuickFps").SelectedIndex==Array.IndexOf(new[]{"30","60","90","120","uncap"},fps),"Quick FPS "+fps);
+        }
+        foreach(string source in new[]{"FpsCombo","QuickFps"}) {
+            foreach(string fps in new[]{"120","uncap"}) {
+                Select("FpsCombo","60"); Select("PresentCombo","Immediate");
+                if(source=="QuickFps") Get<ComboBox>(source).SelectedIndex=Array.IndexOf(new[]{"30","60","90","120","uncap"},fps); else Select(source,fps);
+                Check(Tag("PresentCombo")=="Fifo" && !Get<ComboBox>("PresentCombo").IsEnabled,"High FPS locks FIFO from "+source+" "+fps);
+                Call("SaveSettings"); Call("LoadState"); Call("ApplyStateToUi");
+                Check(Tag("PresentCombo")=="Fifo" && !Get<ComboBox>("PresentCombo").IsEnabled,"FIFO lock reload "+fps);
+                using(var settings=JsonDocument.Parse(File.ReadAllText(Path.Combine(root,"launcher-settings.json"))))
+                    Check(settings.RootElement.GetProperty("PresentMode").GetString()=="Fifo","FIFO persisted "+fps);
+            }
+        }
+        foreach(string fps in new[]{"30","60","90"}) {
+            Select("FpsCombo",fps);
+            Check(Get<ComboBox>("PresentCombo").IsEnabled,"Present choices unlocked "+fps);
+            foreach(string mode in new[]{"","Fifo","FifoRelaxed","Immediate"}) {
+                Select("PresentCombo",mode); Call("SaveSettings"); Call("LoadState"); Call("ApplyStateToUi");
+                Check(Tag("PresentCombo")==mode,"Other FPS preserve present mode "+fps+" "+mode);
+            }
+        }
+        foreach(string fps in new[]{"120","uncap"}) {
+            Select("FpsCombo",fps); Call("SaveSettings");
+            string settings=File.ReadAllText(Path.Combine(root,"launcher-settings.json"));
+            File.WriteAllText(Path.Combine(root,"launcher-settings.json"),settings.Replace("\"PresentMode\": \"Fifo\"","\"PresentMode\": \"Mailbox\""));
+            Call("LoadState"); Call("ApplyStateToUi");
+            Check(Tag("PresentCombo")=="Fifo" && !Get<ComboBox>("PresentCombo").IsEnabled,"Old high FPS config migrates "+fps);
+            Select("PresentCombo","Immediate"); Call("SaveSettings");
+            Check(Tag("PresentCombo")=="Fifo","Save rejects incompatible programmatic selection "+fps);
+        }
+        Select("FpsCombo","90"); Call("SaveSettings");
         Check(Get<CheckBox>("ChangeAppearanceCheck").IsChecked==true,"Mirror option reload");
         string mirrorIni=File.ReadAllText(Path.Combine(root,"bbport.ini"));
         File.WriteAllText(Path.Combine(root,"bbport.ini"),mirrorIni.Replace("change_appearance=1","change_appearance=0"));
@@ -260,6 +294,12 @@ static class Program
         Check(!File.Exists(protectedAccount),"Unchecking remember forgets account");
         Call("LoadState"); Call("ApplyStateToUi");
         Check(Get<PasswordBox>("OnlinePasswordBox").Password.Length==0,"Forgotten account is not restored");
+        foreach(var model in new[]{"Auto","A","B","C","D","E","F","J","K","M","L"}) {
+            Get<ComboBox>("DlssModelCombo").SelectedItem=Get<ComboBox>("DlssModelCombo").Items.Cast<ComboBoxItem>().First(item=>item.Tag?.ToString()==model);
+            Call("SaveSettings"); Call("LoadState"); Call("ApplyStateToUi");
+            Check(Tag("DlssModelCombo")==model,"DLSS model persists "+model);
+            Check(File.ReadAllText(Path.Combine(root,"bbport.ini")).Split('\n').Any(line=>line.Trim()=="dlss_preset="+model),"DLSS model INI "+model);
+        }
         Console.WriteLine($"PASS: {assertions} assertions; settings, navigation, all quick options, launch environment and artwork.");
         window.Close(); app.Shutdown();
     }

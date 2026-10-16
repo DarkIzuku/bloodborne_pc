@@ -22,6 +22,7 @@ public partial class MainWindow : Window
         public string PresentMode { get; set; } = "";
         public string Upscaler { get; set; } = "fsr3";
         public string Preset { get; set; } = "1";
+        public string DlssModel { get; set; } = "Auto";
         public string Fps { get; set; } = "60";
         public string Language { get; set; } = "1";
         public string LiveResolution { get; set; } = "0";
@@ -102,11 +103,19 @@ public partial class MainWindow : Window
         for (int i = 0; i < 8 && dir != null; ++i, dir = dir.Parent)
         {
             if (File.Exists(Path.Combine(dir.FullName, "scripts", "run_windows.py")))
-                return dir.FullName;
+                return Path.TrimEndingDirectorySeparator(dir.FullName);
         }
         return AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
     }
 
+    static string NormalizeDlssModel(string value)
+    {
+        string name=value.Trim().ToUpperInvariant();
+        string[] names={"Auto","A","B","C","D","E","F","J","K","M","L"};
+        string[] values={"0","1","2","3","4","5","6","10","11","13","12"};
+        for(int i=0;i<names.Length;i++) if(name==names[i].ToUpperInvariant() || name==values[i]) return names[i];
+        return "Auto";
+    }
     void LoadState()
     {
         try
@@ -131,8 +140,10 @@ public partial class MainWindow : Window
         // Portable layout: the dump always sits next to the launcher as CUSA03173.
         state.GamePath = Path.Combine(root, "CUSA03173");
         ini = LoadIni();
+        state.DlssModel = NormalizeDlssModel(ReadIniValue("dlss_preset") ?? state.DlssModel);
         // Migrate retired or malformed frame-rate selections before displaying or launching.
         state.Fps = NormalizeFps(state.Fps);
+        if (RequiresVSync(state.Fps)) state.PresentMode = "Fifo";
         string? mirror = ReadIniValue("change_appearance");
         if (mirror != null) state.ChangeAppearance = mirror == "1";
         string? rebirth = ReadIniValue("rebirth");
@@ -159,7 +170,17 @@ public partial class MainWindow : Window
         LoadOnlineState();
     }
 
-    static string NormalizeFps(string? value) => value is "30" or "60" or "90" ? value : "60";
+    static string NormalizeFps(string? value) => value is "30" or "60" or "90" or "120" or "uncap" ? value : "60";
+    static bool RequiresVSync(string fps) => fps is "120" or "uncap";
+
+    void UpdatePresentModeAvailability()
+    {
+        bool required = RequiresVSync(NormalizeFps(ComboTag(FpsCombo, "60")));
+        if (required) SetComboTag(PresentCombo, "Fifo");
+        PresentCombo.IsEnabled = !required;
+        PresentCombo.ToolTip = required ? "120 FPS and Unlimited use FIFO (VSync)." : null;
+        ToolTipService.SetShowOnDisabled(PresentCombo, true);
+    }
 
     static string CameraScale(string? value, double min)
     {
@@ -230,9 +251,11 @@ public partial class MainWindow : Window
         SetComboTag(UpscalerCombo, state.Upscaler);
         SetQuickUpscaler(state.Upscaler);
         SetComboTag(PresetCombo, state.Preset);
+        SetComboTag(DlssModelCombo, state.DlssModel);
         QuickPreset.SelectedIndex = int.TryParse(state.Preset, out int p) ? Math.Clamp(p, 0, 4) : 1;
         SetComboTag(FpsCombo, state.Fps);
         SetQuickFps(state.Fps);
+        UpdatePresentModeAvailability();
 
         SetComboTag(LanguageCombo, state.Language);
         SetComboTag(LiveResolutionCombo, state.LiveResolution);
@@ -277,10 +300,12 @@ public partial class MainWindow : Window
         state.Resolution = ComboText(ResolutionCombo, "1920x1080");
         state.Fullscreen = FullscreenCheck.IsChecked == true;
         state.ShowFps = ShowFpsCheck.IsChecked == true;
-        state.PresentMode = ComboTag(PresentCombo);
         state.Upscaler = ComboTag(UpscalerCombo, "fsr3");
         state.Preset = ComboTag(PresetCombo, "1");
+        state.DlssModel = NormalizeDlssModel(ComboTag(DlssModelCombo, "Auto"));
         state.Fps = NormalizeFps(ComboTag(FpsCombo, "60"));
+        UpdatePresentModeAvailability();
+        state.PresentMode = ComboTag(PresentCombo);
         state.Language = ComboTag(LanguageCombo, "1");
         state.LiveResolution = ComboTag(LiveResolutionCombo, "0");
         state.ModelLod = ComboTag(ModelLodCombo, "0");
@@ -330,6 +355,7 @@ public partial class MainWindow : Window
         {
             ["upscaler"] = state.Upscaler,
             ["preset"] = state.Preset,
+            ["dlss_preset"] = state.DlssModel,
             ["sharpen"] = state.Sharpen ? "1" : "0",
             ["show_fps"] = state.ShowFps ? "1" : "0",
             ["output_res"] = state.Resolution,
@@ -417,7 +443,7 @@ public partial class MainWindow : Window
             new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(117, 207, 121)) :
             new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(210, 107, 112));
         PathValidationText.Text = valid ? $"Game dump detected · {version}" : "Put the CUSA03173 folder (eboot.bin and sce_sys) next to the launcher.";
-        PlayButton.IsEnabled = valid;
+        PlayButton.IsEnabled = valid && !gameRunning;
         PlayHint.Text = valid ? "Ready. Settings are saved automatically when Play is pressed." : "Put a valid Bloodborne dump in the CUSA03173 folder before playing.";
 
         string probe = Path.Combine(root, "out", "bb-probe.exe");
@@ -435,7 +461,7 @@ public partial class MainWindow : Window
         Fsr4Status.Foreground = (fsr411 || fsr4) ? Green() : Muted();
 
         DetectGpu();
-        FooterFps.Text = $"   |   {state.Fps} FPS";
+        FooterFps.Text = $"   |   {(state.Fps == "uncap" ? "Unlimited" : state.Fps + " FPS")}";
     }
 
     static System.Windows.Media.Brush Green() => new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(117, 207, 121));
@@ -569,8 +595,8 @@ public partial class MainWindow : Window
             psi.Environment["BB_CONFIG"] = Path.Combine(root, "bbport.ini");
             psi.Environment["BB_GAME_DIR"] = state.GamePath;
             psi.Environment["BB_FPS"] = state.Fps;
-            psi.Environment["BB_FPS_LIMIT"] = state.Fps;
-            psi.Environment["BB_VBLANK_HZ"] = state.Fps == "90" ? "90" : "60";
+            psi.Environment["BB_FPS_LIMIT"] = state.Fps == "uncap" ? "0" : state.Fps;
+            psi.Environment["BB_VBLANK_HZ"] = state.Fps == "uncap" ? "480" : state.Fps is "90" or "120" ? state.Fps : "60";
             psi.Environment["BB_LANGUAGE"] = state.Language;
             psi.Environment["BB_GAMEPAD_INDEX"] = state.GamepadIndex.ToString();
             psi.Environment["BB_MODS_ENABLED"] = state.ModsEnabled ? "1" : "0";
@@ -600,6 +626,7 @@ public partial class MainWindow : Window
                     WindowState = WindowState.Normal;
                     LoadState();
                     ApplyStateToUi();
+                    RefreshStatus();
                     Activate();
                     FooterMessage.Text = "Bloodborne closed";
                     gameProcess.Dispose();
@@ -677,9 +704,9 @@ public partial class MainWindow : Window
     void QuickFps_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (syncing || QuickFps.SelectedItem is not ComboBoxItem item) return;
-        string v = NormalizeFps(item.Content?.ToString());
+        string v = NormalizeFps(item.Tag?.ToString() ?? item.Content?.ToString());
         SetComboTag(FpsCombo, v);
-        FooterFps.Text = $"   |   {v} FPS";
+        FooterFps.Text = $"   |   {(v == "uncap" ? "Unlimited" : v + " FPS")}";
     }
 
     void SetQuickUpscaler(string value)
@@ -688,7 +715,7 @@ public partial class MainWindow : Window
     }
     void SetQuickFps(string value)
     {
-        QuickFps.SelectedIndex = value switch { "30" => 0, "90" => 2, _ => 1 };
+        QuickFps.SelectedIndex = value switch { "30" => 0, "90" => 2, "120" => 3, "uncap" => 4, _ => 1 };
     }
 
     static string ComboTag(ComboBox box, string fallback = "") =>

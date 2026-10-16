@@ -1,15 +1,10 @@
-name: Windows Build
+name: Public Stability Windows Build
 # buildcheck-trigger: runtime-recovery-stub
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - seamless-dev
-      - offline-performance-precache-buildcheck
-      - upstream-0.3-core-port
-      - upstream-0.4-core-port
-      - bbhost-enhancements-v1
+    branches: [public-stability-dlss-v1, button-prompts, update-stability]
     paths:
       - "src/**"
       - "gpu/**"
@@ -20,6 +15,9 @@ on:
       - "build.sh"
       - "run.bat"
       - ".github/workflows/windows-offline-build.yml"
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -71,7 +69,7 @@ jobs:
           export CC=clang
           export CXX=clang++
           set +e
-          bash build.sh
+          CMAKE_BUILD_PARALLEL_LEVEL=4 bash build.sh
           rc=$?
           set -e
           if [ "$rc" -ne 0 ]; then
@@ -84,7 +82,7 @@ jobs:
         shell: msys2 {0}
         run: |
           set -e
-          ninja -C out/gpu pipeline-cache-blob-test pipeline-archive-test motion-history-test motion-shader-test image-overlap-test settings-test ui-composition-test engine-hooks-test engine-menu-memory-test rebirth-refund-test pc-input-test widescreen-test button-prompts-test
+          ninja -C out/gpu pipeline-cache-blob-test pipeline-archive-test motion-history-test motion-shader-test image-overlap-test runtime-gamepad-test settings-test ui-composition-test engine-hooks-test engine-menu-memory-test rebirth-refund-test pc-input-test widescreen-test button-prompts-test
           out/gpu/pipeline-cache-blob-test.exe
           out/gpu/pipeline-archive-test.exe
           out/gpu/motion-history-test.exe
@@ -95,21 +93,40 @@ jobs:
           out/gpu/engine-hooks-test.exe
           out/gpu/engine-menu-memory-test.exe
           out/gpu/rebirth-refund-test.exe
+          out/gpu/runtime-gamepad-test.exe
           out/gpu/pc-input-test.exe
+          ninja -C out/gpu frame-pacing-test
+          ctest --test-dir out/gpu -R '^frame-pacing' --no-tests=error --output-on-failure
           out/gpu/widescreen-test.exe
           out/gpu/button-prompts-test.exe
 
       - name: Verify preparation, patches, and mod safety
         shell: msys2 {0}
         run: |
+          set -e
+          python -m unittest discover -s tests -p 'test_prepare_cache.py'
+          python -m unittest discover -s tests -p 'test_render_pools.py'
+          python -m unittest discover -s tests -p 'test_redzone.py'
+          python tests/prepare_cache_smoke.py
           python -m unittest discover -s tests -p 'test_prepare.py'
           python -m unittest discover -s tests -p 'test_patches.py'
           python -m unittest discover -s tests -p 'test_game_check.py'
           python -m unittest discover -s tests -p 'test_windows_frame_rate.py'
+          python -m unittest discover -s tests -p 'test_high_frame_rate.py'
           python -m unittest discover -s tests -p 'test_engine_assets.py'
           python -m unittest discover -s tests -p 'test_online.py'
           python -m unittest discover -s tests -p 'test_upscaler_assets.py'
           python -m unittest discover -s tests -p 'test_fsr4cap_dll_info.py'
+
+      - name: Verify native stability and crash diagnostics
+        shell: msys2 {0}
+        run: |
+          set -e
+          ninja -C out/gpu record-data-test dlss-model-test gc-policy-test user-data-test memory-notifications-test tiled-writeback-test gpu-assert-crash-test trophies-test
+          out/gpu/record-data-test.exe --cpu-only
+          ctest --test-dir out/gpu -R '^(gc-policy|user-data|memory-notifications|trophies)$' --no-tests=error --output-on-failure
+          python tests/gpu_assert_crash_dump.py out/gpu/gpu-assert-crash-test.exe
+          python tests/probe_crash_dump.py out/bb-probe.exe
 
       - name: Fetch DLSS 310.9.1
         shell: msys2 {0}
@@ -142,15 +159,16 @@ jobs:
       - name: Setup portable Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13.16"
 
       - name: Download embeddable Python
         shell: pwsh
         run: |
-          $ver = python -c "import platform; print(platform.python_version())"
+          $ver = '3.13.16'
           $url = "https://www.python.org/ftp/python/$ver/python-$ver-embed-amd64.zip"
           New-Item -ItemType Directory -Force -Path package/tools/python | Out-Null
           Invoke-WebRequest -Uri $url -OutFile python-embed.zip
+          if ((Get-FileHash python-embed.zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne '97dae5274cc54867065e8d5a3226e48c35017ed332a0fdb0e27d5b5821961297') { throw 'Python archive checksum mismatch' }
           Expand-Archive python-embed.zip -DestinationPath package/tools/python -Force
           $pth = Get-ChildItem package/tools/python/python*._pth | Select-Object -First 1
           if ($pth) { Add-Content $pth.FullName "..\..\scripts" }
@@ -161,7 +179,7 @@ jobs:
           set -e
           mkdir -p package/out package/scripts package/patches package/mods package/launcher-assets
           cp -f launcher-publish/BloodborneLauncher.exe package/
-          cp -f run.bat build.sh package/
+          cp -f run.bat build.sh setup.bat package/
           cp -f out/bb-probe.exe out/bb-gpu-capabilities.exe out/bb-engine-assets.exe package/out/
           # Release: build.sh keeps debug info (RelWithDebInfo); the package gets it stripped.
           llvm-strip --strip-debug package/out/bb-probe.exe package/out/bb-gpu-capabilities.exe package/out/bb-engine-assets.exe
@@ -174,6 +192,7 @@ jobs:
           test ! -d fsr4_shaders || cp -rf fsr4_shaders package/
           test ! -f LICENSE || cp -f LICENSE package/
           test ! -d licenses || cp -rf licenses package/
+          cp -f out/LICENSE-DLSS-SDK.txt package/licenses/LICENSE-DLSS-SDK.txt
           mkdir -p package/licenses/msys2
           cp -rf /clang64/share/licenses/. package/licenses/msys2/
           test ! -f README.md || cp -f README.md package/
@@ -181,28 +200,12 @@ jobs:
           for exe in out/bb-probe.exe out/bb-gpu-capabilities.exe out/bb-engine-assets.exe; do
             while IFS= read -r dll; do [ -f "$dll" ] && cp -f "$dll" package/out/; done < <(copy_deps "$exe")
           done
-          cat > package/README-FIRST.txt <<'EOF'
-          Bloodborne PC - Windows integration based on upstream 0.4
-
-          1. Run BloodborneLauncher.exe.
-          2. Select your own Bloodborne v1.09 game dump (folder containing eboot.bin and sce_sys).
-          3. Configure resolution, FPS (30, 60 or 90) and upscaler. Unlimited FPS is retired.
-          4. Press PLAY BLOODBORNE.
-
-          The launcher uses artwork from your own game sce_sys folder when available.
-          Online is optional. In ONLINE, enter your own shadNet host, TCP port and WebAPI
-          URL, sign in with the account created on that server's website, and save.
-          The game host override is generated automatically. No server is configured by default.
-          Multiplayer between two clients requires separate validation.
-
-          FSR 4.1.1 requires its separate asset set; this package includes FSR 4 v07,
-          FSR 3.1 and DLSS Super Resolution 310.9.1.
-          EOF
+          python tools/audit_public_package.py package
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
-          name: Bloodborne-PC-v0.4-${{ github.sha }}
+          name: Bloodborne-PC-Stability-${{ github.sha }}
           path: package/
           compression-level: 6
           if-no-files-found: error

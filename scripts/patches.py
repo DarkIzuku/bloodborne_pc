@@ -9,6 +9,7 @@ import json
 import os
 import struct
 import sys
+from render_pools import render_pool_writes
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -17,7 +18,8 @@ EBOOT_BASE=0x400000
 # Above 60 FPS the sprint fix always goes with the frame rate patch: without it sprinting drops to
 # half speed (the game's wall detector measured distance per frame, a 30 FPS rule).
 FPS_PRESETS={'30':[],'60':['60 FPS++'],'90':['90 FPS++','Sprint Fix (High FPS)'],
-             'uncap':['Uncap FPS++','Sprint Fix (High FPS)']}
+             '120':['90 FPS++','Sprint Fix (High FPS)'],
+             'uncap':['90 FPS++','Sprint Fix (High FPS)']}
 # Upscaler presets (bbport.ini "preset", the in-game menu): output / render size ratio. The game
 # then renders at 1920x1080 / ratio and the port's temporal upscaler restores the output size.
 OUTPUT_SIZE=(1920,1080)
@@ -294,6 +296,9 @@ def main():
     validate_patch_requirements(names,a.game_dir)
     segments=eboot_segments((a.out/'eboot.elf').read_bytes())
     writes=compile_patches(a.xml,names,a.app_version,segments)
+    if a.fps in ('120', 'uncap'):
+        from frame_rate import adapt_high_frame_rate
+        writes=adapt_high_frame_rate(writes,a.fps,(a.out/'eboot.elf').read_bytes())
     size=render_size(read_settings(a.settings),a.render_res) if a.render_res else None
     # The UI keeps the game's 1920x1080 coordinates even for a larger output: the port draws
     # it into the output-size image with a viewport scaled by output / 1920
@@ -310,6 +315,9 @@ def main():
         # After the built-in ones: an external patch of the same bytes wins.
         writes+=compile_external(external_selection(external_patches(a.patches_dir,a.app_version,a.xml),
                                                     a.patches_config),segments)
+    writes += render_pool_writes((a.out/'eboot.elf').read_bytes(), writes)
+    from redzone import patch_conflicts
+    writes = patch_conflicts(writes, a.out/'boot-linked.bin')
     # BBPATCH2: the patch base, so the loader can rebase pointers the patches write into
     # relocated slots (60/90 FPS++ replace function pointers).
     blob=struct.pack('<8sQQ',b'BBPATCH2',EBOOT_BASE,len(writes))

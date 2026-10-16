@@ -316,26 +316,6 @@ s32 GetCurrentPid() {
 } // namespace Core::Debugger
 
 namespace Core::Bloodborne {
-namespace {
-std::mutex placement_mutex;
-std::optional<std::string> placement;
-} // namespace
-std::optional<std::string> GetSeamlessHostPlacementHeader() {
-    std::scoped_lock lock{placement_mutex};
-    return placement;
-}
-bool SetSeamlessHostPlacementHeader(std::string_view value) {
-    if (value.empty() || value.size() > 4096) {
-        return false;
-    }
-    std::scoped_lock lock{placement_mutex};
-    placement = std::string{value};
-    return true;
-}
-void ClearSeamlessHostPlacementHeader() {
-    std::scoped_lock lock{placement_mutex};
-    placement.reset();
-}
 void TraceMatching2LeaveRoom(std::uintptr_t, std::uint64_t) {}
 } // namespace Core::Bloodborne
 

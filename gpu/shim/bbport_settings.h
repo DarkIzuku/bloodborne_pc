@@ -6,6 +6,7 @@
 #pragma once
 
 #include <atomic>
+#include "dlss_model.h"
 
 namespace BbSettings {
 
@@ -55,6 +56,7 @@ struct Values {
     std::atomic<MenuLanguage> menu_language{MenuLanguage::English};
     std::atomic<int> upscaler{UpscalerFsr3};
     std::atomic<int> preset{NativeAA};
+    std::atomic<int> dlss_preset{0}; // independent NGX model hint
     std::atomic<bool> sharpen{true};
     std::atomic<float> sharpness{0.3f};
     std::atomic<bool> jitter{true};

@@ -14,6 +14,7 @@
 #include <string.h>
 #include <time.h>
 #include <SDL3/SDL.h>
+#include "../gpu/shim/input/controller_backends.h"
 #include "../gpu/shim/input/input.h"
 #include <sys/stat.h>
 
@@ -89,16 +90,40 @@ static int is_preferred(SDL_JoystickID id, const char *want) {
 /* The chosen gamepad, else the first while it is not connected (checked again every second, it
  * is taken as soon as it connects); called under lock. */
 static SDL_Gamepad *current_gamepad(void) {
-    static int on_preferred; static uint64_t last_scan;
-    if (!sdl_ready) sdl_ready = SDL_WasInit(SDL_INIT_GAMEPAD) ? 1 : SDL_InitSubSystem(SDL_INIT_GAMEPAD) ? 1 : -1;
-    if (sdl_ready<0) return NULL;
+    static int on_preferred, inventory_logged, previous_count=-1; static uint64_t last_scan, retry_init;
+    const uint64_t now=now_us();
+    if (sdl_ready<0 && now-retry_init<1000000) return NULL;
+    if (sdl_ready<=0) {
+        bb_controller_backends();
+        sdl_ready=SDL_WasInit(SDL_INIT_GAMEPAD) ? 1 : SDL_InitSubSystem(SDL_INIT_GAMEPAD) ? 1 : -1;
+        if (sdl_ready<0) {
+            retry_init=now;
+            if (!inventory_logged) printf("Runtime: SDL gamepad initialization failed: %s\n",SDL_GetError());
+            inventory_logged=1; return NULL;
+        }
+        printf("Runtime: controller SDL=%d WGI=%s GameInput=%s\n",SDL_GetVersion(),
+            SDL_GetHint(SDL_HINT_JOYSTICK_WGI) ? SDL_GetHint(SDL_HINT_JOYSTICK_WGI) : "default",
+            SDL_GetHint(SDL_HINT_JOYSTICK_GAMEINPUT) ? SDL_GetHint(SDL_HINT_JOYSTICK_GAMEINPUT) : "default");
+        inventory_logged=0;
+    }
     if (gamepad && !SDL_GamepadConnected(gamepad)) { SDL_CloseGamepad(gamepad); gamepad=NULL; }
     const char *want=preferred_gamepad();
-    const uint64_t now=now_us();
-    if (!gamepad || (want && !on_preferred && now-last_scan>1000000)) {
+    if ((!gamepad || (want && !on_preferred)) && (!last_scan || now-last_scan>=1000000)) {
         last_scan=now;
         int count=0, pick=-1;
         SDL_JoystickID *ids=SDL_GetGamepads(&count);
+        if (!inventory_logged || previous_count!=count) {
+            printf("Runtime: controller inventory mapped=%d\n",count);
+            int all_count=0; SDL_JoystickID *all=SDL_GetJoysticks(&all_count);
+            for (int i=0;all && i<all_count && i<16;++i) {
+                char guid[33]; SDL_GUIDToString(SDL_GetJoystickGUIDForID(all[i]),guid,sizeof(guid));
+                const char *name=SDL_GetJoystickNameForID(all[i]);
+                printf("Runtime: controller device name=%s GUID=%s vendor=%04x product=%04x mapped=%d\n",
+                    name ? name : "unknown",guid,SDL_GetJoystickVendorForID(all[i]),
+                    SDL_GetJoystickProductForID(all[i]),SDL_IsGamepad(all[i]));
+            }
+            SDL_free(all); inventory_logged=1; previous_count=count;
+        }
         for (int i=0; want && ids && i<count && pick<0; ++i) if (is_preferred(ids[i],want)) pick=i;
         if (pick<0 && !gamepad && ids && count>0) {
             const char *selected=getenv("BB_GAMEPAD_INDEX");
@@ -106,14 +131,15 @@ static SDL_Gamepad *current_gamepad(void) {
             if (pick<0 || pick>=count) pick=0;
         }
         if (pick>=0 && (!gamepad || SDL_GetGamepadID(gamepad)!=ids[pick])) {
-            if (gamepad) SDL_CloseGamepad(gamepad);
-            gamepad=SDL_OpenGamepad(ids[pick]);
-            on_preferred=want && gamepad && is_preferred(ids[pick],want);
-            if (gamepad) {
+            SDL_Gamepad *replacement=SDL_OpenGamepad(ids[pick]);
+            if (replacement) {
+                if (gamepad) SDL_CloseGamepad(gamepad);
+                gamepad=replacement;
+                on_preferred=want && is_preferred(ids[pick],want);
                 ++connected_count;
                 printf("Runtime: gamepad connected: %s%s\n",SDL_GetGamepadName(gamepad),
                        !want ? "" : on_preferred ? " (the chosen one)" : " (the chosen one is not connected)");
-            }
+            } else printf("Runtime: gamepad open failed id=%u: %s\n",ids[pick],SDL_GetError());
         }
         SDL_free(ids);
     }

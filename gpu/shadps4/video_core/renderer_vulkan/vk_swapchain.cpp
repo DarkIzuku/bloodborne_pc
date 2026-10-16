@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cstdio>
 #include <limits>
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "core/emulator_settings.h"
+#include "frame_pacing.h"
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -203,6 +205,9 @@ void Swapchain::FindPresentMode() {
         LOG_ERROR(Render, "Failed to query available present modes, falling back to Fifo as "
                           "guaranteed supported option.");
         present_mode = vk::PresentModeKHR::eFifo;
+        BbFramePacing::SetVSync(true);
+        if (EmulatorSettings.Flag("BB_FRAME_STATS", false))
+            std::puts("Frame pacing: Vulkan present mode Fifo (surface query fallback)");
         return;
     }
 
@@ -211,6 +216,8 @@ void Swapchain::FindPresentMode() {
         present_mode = vk::PresentModeKHR::eMailbox;
     } else if (requested_mode == "Fifo") {
         present_mode = vk::PresentModeKHR::eFifo;
+    } else if (requested_mode == "FifoRelaxed") {
+        present_mode = vk::PresentModeKHR::eFifoRelaxed;
     } else if (requested_mode == "Immediate") {
         present_mode = vk::PresentModeKHR::eImmediate;
     } else {
@@ -226,6 +233,11 @@ void Swapchain::FindPresentMode() {
                     vk::to_string(present_mode), vk::to_string(fallback));
         present_mode = fallback;
     }
+    if (EmulatorSettings.Flag("BB_FRAME_STATS", false))
+        std::printf("Frame pacing: Vulkan present mode %s\n", vk::to_string(present_mode).c_str());
+    // Publish the selected mode, including fallback, rather than the requested INI value.
+    BbFramePacing::SetVSync(present_mode == vk::PresentModeKHR::eFifo ||
+                           present_mode == vk::PresentModeKHR::eFifoRelaxed);
 }
 
 void Swapchain::SetSurfaceProperties() {

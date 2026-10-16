@@ -3,6 +3,7 @@
 #pragma once
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include "common/types.h"
 
@@ -22,7 +23,20 @@ public:
     s32 GetGpuId() { static const auto value = s32(Number("BB_GPU_ID", -1)); return value; }
     u32 GetInternalScreenWidth() { static const auto value = u32(Number("BB_INTERNAL_WIDTH", 1920)); return value; }
     u32 GetInternalScreenHeight() { static const auto value = u32(Number("BB_INTERNAL_HEIGHT", 1080)); return value; }
-    std::string GetPresentMode() { const char* v = std::getenv("BB_PRESENT_MODE"); return v ? v : "Mailbox"; }
+    bool RequiresFifoForFrameRate() {
+        const char* fps = std::getenv("BB_FPS");
+        return (fps && (!std::strcmp(fps, "120") || !std::strcmp(fps, "uncap"))) ||
+               GetFrameLimit() == 0 || GetFrameLimit() == 120 || GetVblankFrequency() >= 120;
+    }
+    std::string GetPresentMode() {
+#ifdef _WIN32
+        // Keep high-FPS presentation synchronized even for direct runtime launches
+        // and older launchers that still request Mailbox/Immediate/Relaxed.
+        if (RequiresFifoForFrameRate()) return "Fifo";
+#endif
+        const char* v = std::getenv("BB_PRESENT_MODE");
+        return v ? v : "Mailbox";
+    }
     int GetRcasAttenuation() { static const auto value = int(Number("BB_RCAS_ATTENUATION", 250)); return value; }
     // bbport: Relaxed by default: without readbacks FaceGen reads stale GPU-written vertices
     // (vertex explosions); in Hunter's Nightmare it costs no measurable frame rate.
@@ -37,8 +51,9 @@ public:
         static const u32 value = [] {
             const long hz = Number("BB_VBLANK_HZ", 60);
 #ifdef _WIN32
-            // Direct runtime launches must be safe too, even with legacy uncapped env vars.
-            return hz == 30 || hz == 60 || hz == 90 ? u32(hz) : 60u;
+            // Uncapped flips use the fine vblank clock; the independent title guard stays active.
+            return hz == 0 || hz == 480 ? 480u :
+                   hz == 30 || hz == 60 || hz == 90 || hz == 120 ? u32(hz) : 60u;
 #else
             return hz > 0 ? u32(hz) : 480u;
 #endif
@@ -50,8 +65,7 @@ public:
         static const bool value = [] {
             const long hz = Number("BB_VBLANK_HZ", 60);
 #ifdef _WIN32
-            (void)hz;
-            return false;
+            return hz == 0 || hz == 480;
 #else
             return hz <= 0 || hz > 120;
 #endif
@@ -63,7 +77,7 @@ public:
         static const u32 value = [] {
 #ifdef _WIN32
             const long fps = Number("BB_FPS_LIMIT", GetInstance()->GetVblankFrequency());
-            return fps == 30 || fps == 60 || fps == 90 ? u32(fps) : 60u;
+            return fps == 0 || fps == 30 || fps == 60 || fps == 90 || fps == 120 ? u32(fps) : 60u;
 #else
             return u32(std::max(0L, Number("BB_FPS_LIMIT", 0)));
 #endif
