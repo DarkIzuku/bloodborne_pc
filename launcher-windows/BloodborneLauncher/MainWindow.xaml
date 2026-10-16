@@ -164,7 +164,7 @@
                                             </Grid.ColumnDefinitions>
                                             <Grid.RowDefinitions>
                                                 <RowDefinition Height="28" />
-                                                <RowDefinition Height="36" />
+                                                <RowDefinition Height="0" />
                                                 <RowDefinition Height="28" />
                                                 <RowDefinition Height="28" />
                                                 <RowDefinition Height="28" />
@@ -175,20 +175,6 @@
                                             <TextBlock Grid.Row="0" Text="" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" Foreground="#B2A591" />
                                             <TextBlock Grid.Row="0" Grid.Column="1" Text="Game version" Style="{StaticResource StatusLabel}" />
                                             <TextBlock Grid.Row="0" Grid.Column="2" x:Name="GameVersionStatus" Text="Not configured" Style="{StaticResource StatusValue}" />
-                                            <Path Grid.Row="1" Data="M1,4 L7,4 9,6 18,6 18,16 1,16Z M1,7 L18,7" Stroke="#B2A591" StrokeThickness="1" Width="16" Height="13" Stretch="Uniform" HorizontalAlignment="Left" VerticalAlignment="Center" />
-                                            <TextBlock Grid.Row="1" Grid.Column="1" Text="Game path" Style="{StaticResource StatusLabel}" />
-                                            <Grid Grid.Row="1" Grid.Column="2">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*" />
-                                                    <ColumnDefinition Width="38" />
-                                                </Grid.ColumnDefinitions>
-                                                <Border BorderBrush="#483F32" BorderThickness="1" Background="#80090B0C" Padding="8,0" Margin="0,3,6,3">
-                                                    <TextBlock x:Name="GamePathStatus" Text="Select Bloodborne folder" Style="{StaticResource StatusValue}" />
-                                                </Border>
-                                                <Button Grid.Column="1" Padding="0" Margin="0,3" Click="BrowseGame_Click" ToolTip="Select Bloodborne folder" AutomationProperties.Name="Select Bloodborne folder">
-                                                    <Path Data="M1,4 L7,4 9,6 18,6 18,16 1,16Z M1,7 L18,7" Stroke="#DDC4A1" StrokeThickness="1.2" Width="18" Height="14" Stretch="Uniform" />
-                                                </Button>
-                                            </Grid>
                                             <TextBlock Grid.Row="2" Text="" FontFamily="Segoe MDL2 Assets" VerticalAlignment="Center" Foreground="#B2A591" />
                                             <TextBlock Grid.Row="2" Grid.Column="1" Text="GPU" Style="{StaticResource StatusLabel}" />
                                             <TextBlock Grid.Row="2" Grid.Column="2" x:Name="GpuStatus" Text="Detecting..." Style="{StaticResource StatusValue}" />
@@ -300,11 +286,8 @@
                             <Border Style="{StaticResource CardStyle}">
                                 <StackPanel>
                                     <TextBlock Style="{StaticResource SectionTitle}" Text="GAME INSTALLATION" />
-                                    <TextBlock Text="Bloodborne folder" />
-                                    <DockPanel Margin="0,7,0,14">
-                                        <Button DockPanel.Dock="Right" Content="Browse" Style="{StaticResource SmallButton}" Margin="8,0,0,0" Click="BrowseGame_Click" />
-                                        <TextBox x:Name="PathBox" AutomationProperties.Name="Bloodborne folder" IsReadOnly="True" />
-                                    </DockPanel>
+                                    <!-- Fixed to CUSA03173 next to the launcher; kept hidden as the status source. -->
+                                    <TextBox x:Name="PathBox" Visibility="Collapsed" IsReadOnly="True" />
                                     <TextBlock TextWrapping="Wrap" x:Name="PathValidationText" Foreground="#9CA3A9" Text="Choose the folder containing eboot.bin and sce_sys." />
                                     <TextBlock Text="Language" Margin="0,18,0,6" />
                                     <ComboBox x:Name="LanguageCombo" AutomationProperties.Name="Language" Width="260" HorizontalAlignment="Left">

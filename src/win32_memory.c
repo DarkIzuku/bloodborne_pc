@@ -47,13 +47,23 @@ int win_mem_space(uintptr_t start, uintptr_t end) {
     space_start = start; space_end = end;
     return 0;
 }
+/* The pool is only reserved: SEC_COMMIT would charge all of it (10 GiB with the 1440p budget)
+ * against RAM + page file at start, while the Linux memfd costs only what is used. */
 int win_mem_section(uint64_t size, void **backing) {
-    section = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_EXECUTE_READWRITE | SEC_COMMIT,
+    section = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_EXECUTE_READWRITE | SEC_RESERVE,
                                  (DWORD)(size >> 32), (DWORD)size, NULL);
     if (!section) { report("creating the memory pool section", 0, size); return -1; }
     *backing = MapViewOfFile(section, FILE_MAP_ALL_ACCESS, 0, 0, size);
     if (!*backing) { report("mapping the memory pool", 0, size); return -1; }
     return 0;
+}
+/* Commits pool pages when the guest allocates them; every view of the section sees them.
+ * Section pages cannot be decommitted, so a released range stays committed for reuse. */
+int win_mem_commit(void *at, uint64_t size) {
+    if (VirtualAlloc(at, size, MEM_COMMIT, PAGE_READWRITE)) return 0;
+    report("committing guest memory", (uintptr_t)at, (uintptr_t)at + size);
+    fputs("Runtime: Windows has no memory left to commit: close other programs or enlarge the page file\n", stderr);
+    return -1;
 }
 static DWORD page_mode(int prot) {
     switch (prot & 7) {

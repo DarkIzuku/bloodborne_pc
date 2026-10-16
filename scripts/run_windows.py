@@ -139,9 +139,15 @@ def main():
                        '--enabled', os.environ.get('BB_MODS_ENABLED', '1')], capture=True))
     overlay = merged if merged.resolve() != original else None
     try:
-        for script, extra in (('prepare.py', []), ('link_libc.py', []), ('link_modules.py', []),
-                              ('content_profile.py', ['--sku', os.environ.get('BB_CONTENT_SKU', 'full')])):
-            run([PYTHON, SCRIPTS / script, merged, '--out', out, *extra])
+        import prepare_stamp
+        sku = os.environ.get('BB_CONTENT_SKU', 'full')
+        if prepare_stamp.unchanged(merged, out, sku):
+            print('Prepared image is current (BB_FORCE_PREPARE=1 rebuilds it)', flush=True)
+        else:
+            for script, extra in (('prepare.py', []), ('link_libc.py', []), ('link_modules.py', []),
+                                  ('content_profile.py', ['--sku', sku])):
+                run([PYTHON, SCRIPTS / script, merged, '--out', out, *extra])
+            prepare_stamp.write(merged, out, sku)
         prebuilt = os.environ.get('BB_PREBUILT') == '1'
         if not prebuilt:
             build()

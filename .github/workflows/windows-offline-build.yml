@@ -161,12 +161,16 @@ jobs:
           set -e
           mkdir -p package/out package/scripts package/patches package/mods package/launcher-assets
           cp -f launcher-publish/BloodborneLauncher.exe package/
-          cp -f run.bat build.sh setup.bat package/
+          cp -f run.bat build.sh package/
           cp -f out/bb-probe.exe out/bb-gpu-capabilities.exe out/bb-engine-assets.exe package/out/
+          # Release: build.sh keeps debug info (RelWithDebInfo); the package gets it stripped.
+          llvm-strip --strip-debug package/out/bb-probe.exe package/out/bb-gpu-capabilities.exe package/out/bb-engine-assets.exe
           cp -f launcher-windows/BloodborneLauncher/Assets/bloodborne.ico package/out/
           test ! -f out/nvngx_dlss.dll || cp -f out/nvngx_dlss.dll package/out/
           cp -rf scripts/* package/scripts/
           test ! -d patches || cp -rf patches/* package/patches/
+          # Bundled file mods (Visual Upgrade Mod); the mod loader enables new folders by default.
+          test ! -d mods || cp -rf mods/. package/mods/
           test ! -d fsr4_shaders || cp -rf fsr4_shaders package/
           test ! -f LICENSE || cp -f LICENSE package/
           test ! -d licenses || cp -rf licenses package/

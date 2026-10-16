@@ -49,14 +49,17 @@ static class Program
     static void Run(string output) {
         Directory.CreateDirectory(output);
         var root = AppContext.BaseDirectory;
-        string game = Path.Combine(root, "Test game");
+        string game = Path.Combine(root, "CUSA03173");
         Directory.CreateDirectory(Path.Combine(game,"sce_sys"));
-        File.WriteAllText(Path.Combine(game,"eboot.bin"),"launcher test fixture");
+        if (File.Exists(Path.Combine(game,"eboot.bin"))) File.Delete(Path.Combine(game,"eboot.bin"));
         File.WriteAllText(Path.Combine(game,"sce_sys","param.sfo"),"01.09");
-        File.WriteAllText(Path.Combine(root,"run.bat"),"@echo off\r\nset BB_ > launch-env.txt\r\necho %* > launch-args.txt\r\necho session>>launch-count.txt\r\nping 127.0.0.1 -n 3 > nul\r\n");
+        // Stands in for the game's Python: records what Play passes to it.
+        string fakePython = Path.Combine(root,"fake-python.bat");
+        File.WriteAllText(fakePython,"@echo off\r\nset BB_ > launch-env.txt\r\necho %* > launch-args.txt\r\necho session>>launch-count.txt\r\nping 127.0.0.1 -n 3 > nul\r\n");
         File.WriteAllText(Path.Combine(root,"bbport.ini"),"# keep this comment\r\nunrelated_setting=keep\r\nupscaler=off\r\n");
         foreach (string key in Environment.GetEnvironmentVariables().Keys)
             if(key.StartsWith("BB_")) Environment.SetEnvironmentVariable(key,null);
+        Environment.SetEnvironmentVariable("BB_PYTHON",fakePython);
         if (File.Exists(Path.Combine(root,"launcher-settings.json"))) File.Delete(Path.Combine(root,"launcher-settings.json"));
         foreach(var stale in new[]{"out/game_dir.txt","launch-env.txt","launch-args.txt"}) { var f=Path.Combine(root,stale); if(File.Exists(f)) File.Delete(f); }
         var app = new App();
@@ -74,6 +77,7 @@ static class Program
             Check(Get<TextBox>(name).Text=="","Online must have no preconfigured address/account: "+name);
         Check(Get<CheckBox>("OnlineEnabledCheck").IsChecked==false,"Online is opt-in");
         Render(Path.Combine(output,"launcher-play-unconfigured.png"));
+        File.WriteAllText(Path.Combine(game,"eboot.bin"),"launcher test fixture");
         Get<TextBox>("PathBox").Text=game; Call("RefreshStatus");
         Check(Get<Button>("PlayButton").IsEnabled,"Valid fixture should enable Play");
         Check(Get<TextBlock>("GameVersionStatus").Text.Contains("1.09"),"1.09 detection");

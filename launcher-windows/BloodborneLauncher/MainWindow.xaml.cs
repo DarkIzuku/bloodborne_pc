@@ -101,8 +101,7 @@ public partial class MainWindow : Window
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         for (int i = 0; i < 8 && dir != null; ++i, dir = dir.Parent)
         {
-            if (File.Exists(Path.Combine(dir.FullName, "run.bat")) &&
-                File.Exists(Path.Combine(dir.FullName, "build.sh")))
+            if (File.Exists(Path.Combine(dir.FullName, "scripts", "run_windows.py")))
                 return dir.FullName;
         }
         return AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
@@ -114,11 +113,6 @@ public partial class MainWindow : Window
         {
             if (File.Exists(statePath))
                 state = JsonSerializer.Deserialize<LauncherState>(File.ReadAllText(statePath)) ?? new();
-            else
-            {
-                string remembered = Path.Combine(root, "out", "game_dir.txt");
-                if (File.Exists(remembered)) state.GamePath = File.ReadAllText(remembered).Trim();
-            }
         }
         catch
         {
@@ -134,11 +128,8 @@ public partial class MainWindow : Window
                 FooterMessage.Text = "launcher-settings.json could not be read; using default settings";
             }
         }
-        // Portable layout: the dump sits next to the launcher as CUSA03173.
-        string defaultGame = Path.Combine(root, "CUSA03173");
-        if (string.IsNullOrWhiteSpace(state.GamePath) ||
-            (!File.Exists(Path.Combine(state.GamePath, "eboot.bin")) && File.Exists(Path.Combine(defaultGame, "eboot.bin"))))
-            state.GamePath = defaultGame;
+        // Portable layout: the dump always sits next to the launcher as CUSA03173.
+        state.GamePath = Path.Combine(root, "CUSA03173");
         ini = LoadIni();
         // Migrate retired or malformed frame-rate selections before displaying or launching.
         state.Fps = NormalizeFps(state.Fps);
@@ -421,14 +412,13 @@ public partial class MainWindow : Window
         string version = DetectGameVersion(game);
         bool valid = eboot && sce;
 
-        GamePathStatus.Text = valid ? game : "Select Bloodborne folder";
         GameVersionStatus.Text = valid ? version : "Not configured";
         GameVersionStatus.Foreground = valid && version.Contains("1.09") ?
             new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(117, 207, 121)) :
             new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(210, 107, 112));
-        PathValidationText.Text = valid ? $"Game dump detected · {version}" : "Choose the folder containing eboot.bin and sce_sys.";
+        PathValidationText.Text = valid ? $"Game dump detected · {version}" : "Put the CUSA03173 folder (eboot.bin and sce_sys) next to the launcher.";
         PlayButton.IsEnabled = valid;
-        PlayHint.Text = valid ? "Ready. Settings are saved automatically when Play is pressed." : "Select a valid Bloodborne dump before playing.";
+        PlayHint.Text = valid ? "Ready. Settings are saved automatically when Play is pressed." : "Put a valid Bloodborne dump in the CUSA03173 folder before playing.";
 
         string probe = Path.Combine(root, "out", "bb-probe.exe");
         RuntimeStatus.Text = File.Exists(probe) ? "Ready" : "Not built";
@@ -551,10 +541,13 @@ public partial class MainWindow : Window
             MessageBox.Show("Select a valid Bloodborne folder first.", "Bloodborne PC", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
-        string runBat = Path.Combine(root, "run.bat");
-        if (!File.Exists(runBat))
+        // The packaged Python first, then MSYS2's (source checkouts); BB_PYTHON overrides both.
+        string python = Environment.GetEnvironmentVariable("BB_PYTHON") ?? Path.Combine(root, "tools", "python", "python.exe");
+        if (!File.Exists(python))
+            python = Path.Combine(Environment.GetEnvironmentVariable("BB_MSYS2") ?? @"C:\msys64", "clang64", "bin", "python.exe");
+        if (!File.Exists(python))
         {
-            MessageBox.Show("run.bat was not found next to the runtime.", "Bloodborne PC", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show("Python runtime not found. Use the packaged build, or install MSYS2 and set BB_MSYS2.", "Bloodborne PC", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
         try
@@ -563,13 +556,13 @@ public partial class MainWindow : Window
             Directory.CreateDirectory(logsDir);
             string logPath = Path.Combine(logsDir, $"bbport-{DateTime.Now:yyyy-MM-dd_HH-mm-ss}.log");
 
-            var psi = new ProcessStartInfo("cmd.exe")
+            var psi = new ProcessStartInfo(python)
             {
                 WorkingDirectory = root,
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
-                Arguments = $"/c \"\"{runBat}\" --game-dir \"{state.GamePath}\"\""
+                Arguments = $"\"{Path.Combine(root, "scripts", "run_windows.py")}\" --game-dir \"{state.GamePath}\""
             };
             psi.Environment["BB_PREBUILT"] = "1";
             psi.Environment["BB_DATA_DIR"] = root;
@@ -628,19 +621,6 @@ public partial class MainWindow : Window
 
     void Save_Click(object sender, RoutedEventArgs e) => SaveSettings();
 
-    void BrowseGame_Click(object sender, RoutedEventArgs e)
-    {
-        var dialog = new OpenFolderDialog { Title = "Select the Bloodborne v1.09 folder" };
-        if (!string.IsNullOrWhiteSpace(PathBox.Text) && Directory.Exists(PathBox.Text))
-            dialog.InitialDirectory = PathBox.Text;
-        if (dialog.ShowDialog() == true)
-        {
-            PathBox.Text = dialog.FolderName;
-            state.GamePath = dialog.FolderName;
-            LoadHeroImage();
-            RefreshStatus();
-        }
-    }
 
     void OpenMods_Click(object sender, RoutedEventArgs e)
     {

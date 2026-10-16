@@ -1,15 +1,17 @@
 # Builds the Windows package from this repository: the runtime (build.sh in MSYS2 CLANG64) and
-# BloodborneLauncher.exe. Optionally upgrades an install in place and makes a portable zip.
+# BloodborneLauncher.exe, then a portable zip named by version (dist\Bloodborne-PC-<git describe>.zip).
+# Optionally upgrades an install in place too.
+# Only what a player needs is copied: no setup.bat, __pycache__ or exe backups.
 #
-#   .\launcher-windows\build-launcher.ps1                                    build only
+#   .\launcher-windows\build-launcher.ps1                                    build + zip
 #   .\launcher-windows\build-launcher.ps1 -InstallDir D:\Bloodborne          also upgrade that install
-#   .\launcher-windows\build-launcher.ps1 -InstallDir D:\Bloodborne -Zip     also make a portable zip
-#   -SkipRuntime: reuse the runtime already in out\   -SkipTests: skip the launcher tests
+#   -NoZip: no zip   -SkipRuntime: reuse the runtime in out\   -SkipTests: skip the launcher tests
 #
-# Everything comes from the repository build. The install only provides what the repository
-# does not have: tools\python, fsr4_shaders and out\nvngx_dlss.dll.
+# Everything comes from the repository build. An install provides what the repository does not
+# have: tools\python, fsr4_shaders and out\nvngx_dlss.dll. That is -AssetsDir, else -InstallDir,
+# else the folder used last time (dist\assets-dir.txt).
 # Without arguments (e.g. from build-launcher.bat) it asks for the install folder.
-param([string]$InstallDir, [switch]$Zip, [switch]$SkipTests, [switch]$SkipRuntime)
+param([string]$InstallDir, [string]$AssetsDir, [switch]$NoZip, [switch]$SkipTests, [switch]$SkipRuntime)
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $project = Join-Path $PSScriptRoot 'BloodborneLauncher\BloodborneLauncher.csproj'
@@ -38,10 +40,19 @@ function Copy-Tree([string]$from, [string]$to) {
 function Copy-Runtime([string]$dest) {
     New-Item -ItemType Directory -Force "$dest\out" | Out-Null
     foreach ($exe in $runtimeExes) { Copy-Item "$repo\out\$exe" "$dest\out" -Force }
+    # Release: build.sh keeps debug info (RelWithDebInfo) for development; players get it stripped
+    # (bb-probe 164 MB -> 17 MB, same optimized code).
+    & 'C:\msys64\clang64\bin\llvm-strip.exe' --strip-debug ($runtimeExes | ForEach-Object { "$dest\out\$_" })
+    if ($LASTEXITCODE -ne 0) { throw 'llvm-strip failed.' }
     foreach ($dll in $runtimeDlls) { Copy-Item $dll "$dest\out" -Force }
     Copy-Item "$PSScriptRoot\BloodborneLauncher\Assets\bloodborne.ico" "$dest\out" -Force
-    foreach ($f in 'run.bat', 'build.sh', 'setup.bat', 'LICENSE', 'README.md') { Copy-Item "$repo\$f" $dest -Force }
-    foreach ($d in 'scripts', 'patches', 'licenses') { Copy-Tree "$repo\$d" "$dest\$d" }
+    # The launcher starts scripts\run_windows.py itself, so run.bat, build.sh and setup.bat are for
+    # source checkouts only.
+    # mods: the bundled file mods (Visual Upgrade Mod), enabled by default by the mod loader.
+    foreach ($d in 'scripts', 'patches', 'licenses', 'mods') { Copy-Tree "$repo\$d" "$dest\$d" }
+    # The GPL needs its text shipped with the binaries; kept in licenses\ off the top folder.
+    Copy-Item "$repo\LICENSE" "$dest\licenses\LICENSE.txt" -Force
+    Get-ChildItem "$dest\scripts" -Recurse -Directory -Filter __pycache__ | Remove-Item -Recurse -Force
     # The shipped MSYS2 DLLs' licenses, as in CI.
     Copy-Tree 'C:\msys64\clang64\share\licenses' "$dest\licenses\msys2"
 }
@@ -60,11 +71,18 @@ $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
 if (-not (Test-Path $msysBash)) { throw 'MSYS2 is needed for the runtime (C:\msys64, see README "Windows").' }
 
 if (-not $PSBoundParameters.ContainsKey('InstallDir')) {
-    $InstallDir = Read-Host 'Install folder to upgrade, e.g. D:\Bloodborne (empty = only build)'
-    if ($InstallDir -and -not $PSBoundParameters.ContainsKey('Zip')) { $Zip = (Read-Host 'Also make a portable zip? (y/n)') -eq 'y' }
+    $InstallDir = Read-Host 'Install folder to upgrade, e.g. D:\Bloodborne (empty = only build the zip)'
 }
-if ($InstallDir -and -not (Test-Path (Join-Path $InstallDir 'run.bat'))) { throw "$InstallDir is not a Bloodborne PC install (no run.bat)." }
-if ($Zip -and -not $InstallDir) { throw '-Zip needs -InstallDir: the package takes tools\python and fsr4_shaders from that install.' }
+if ($InstallDir -and -not (Test-Path (Join-Path $InstallDir 'BloodborneLauncher.exe'))) { throw "$InstallDir is not a Bloodborne PC install (no BloodborneLauncher.exe)." }
+$assetsFile = Join-Path $dist 'assets-dir.txt'
+if (-not $NoZip) {
+    if (-not $AssetsDir) { $AssetsDir = if ($InstallDir) { $InstallDir } elseif (Test-Path $assetsFile) { (Get-Content $assetsFile -Raw).Trim() } }
+    if (-not $AssetsDir -or -not (Test-Path "$AssetsDir\tools\python\python.exe")) {
+        throw "The zip takes tools\python and fsr4_shaders from an install: pass -InstallDir or -AssetsDir once (it is remembered)."
+    }
+    New-Item -ItemType Directory -Force $dist | Out-Null
+    Set-Content $assetsFile (Resolve-Path $AssetsDir).Path
+}
 
 if (-not $SkipRuntime) {
     Write-Host '== Building the runtime (build.sh)'
@@ -72,8 +90,10 @@ if (-not $SkipRuntime) {
 }
 foreach ($exe in $runtimeExes) { if (-not (Test-Path "$repo\out\$exe")) { throw "out\$exe is missing: run without -SkipRuntime." } }
 # The MSYS2 DLLs the runtime programs load, as in CI (windows-offline-build.yml).
-$runtimeDlls = Invoke-Msys ('for e in ' + (($runtimeExes | ForEach-Object { "out/$_" }) -join ' ') +
-    '; do ldd "$e"; done | awk ''{print $3}'' | grep -iE ''/clang64/bin/.*\.dll$'' | sort -u | xargs -r cygpath -w')
+# Filtered here, not with a bash pipeline: its xargs hangs in VS Code's PowerShell Extension terminal.
+$runtimeDlls = Invoke-Msys ('for e in ' + (($runtimeExes | ForEach-Object { "out/$_" }) -join ' ') + '; do ldd "$e"; done') |
+    Select-String '/clang64/bin/([^/\s]+\.dll)' | ForEach-Object { "C:\msys64\clang64\bin\$($_.Matches[0].Groups[1].Value)" } |
+    Sort-Object -Unique
 
 if (-not $SkipTests) {
     Write-Host '== Testing the launcher'
@@ -94,43 +114,31 @@ if ($InstallDir) {
         throw 'Close the launcher and the game in the install folder first.'
     }
     Write-Host "== Upgrading $InstallDir"
-    # Previous programs are kept as .bak to go back; settings, saves and the game are not touched.
-    foreach ($file in @('BloodborneLauncher.exe') + ($runtimeExes | ForEach-Object { "out\$_" })) {
-        if (Test-Path "$InstallDir\$file") { Copy-Item "$InstallDir\$file" "$InstallDir\$file.bak" -Force }
-    }
+    # Settings, saves and the game are not touched. Leftovers of older upgrades are removed: exe
+    # backups (the programs are rebuilt from the repository) and setup.bat.
+    Get-ChildItem $InstallDir, "$InstallDir\out" -Filter *.exe.bak | Remove-Item -Force
+    foreach ($f in 'setup.bat', 'run.bat', 'build.sh', 'README.md', 'README-FIRST.txt', 'LICENSE') { Remove-Item "$InstallDir\$f" -Force -ErrorAction SilentlyContinue }
     Copy-Item $exe $InstallDir -Force
     Copy-Runtime $InstallDir
-    Write-Host 'Upgraded (previous programs kept as *.exe.bak)'
+    Write-Host 'Upgraded'
 }
 
-if ($Zip) {
+if (-not $NoZip) {
     Write-Host '== Packaging'
-    $version = (Get-Date -Format 'yyyy-MM-dd') + ((git -C $repo rev-parse --short HEAD 2>$null) | ForEach-Object { "-$_" })
+    # The last tag, commits since it and the commit, e.g. v0.4.0-12-g105b766 (-dirty: uncommitted changes).
+    $version = git -C $repo describe --tags --always --dirty 2>$null
+    if (-not $version) { $version = Get-Date -Format 'yyyy-MM-dd' }
     $stage = Join-Path ([IO.Path]::GetTempPath()) "bbpc-package-$([Guid]::NewGuid().ToString('N'))"
     $pkg = Join-Path $stage 'Bloodborne-PC'
     try {
-        New-Item -ItemType Directory -Force "$pkg\mods", "$pkg\logs" | Out-Null
+        Copy-Runtime $pkg  # creates $pkg
         Copy-Item $exe $pkg
-        Copy-Runtime $pkg
-        # Not in the repository: taken from the install. fsr4_411 is left out: it is built from
+        # Not in the repository: taken from $AssetsDir. fsr4_411 is left out: it is built from
         # the user's own AMD DLL.
-        foreach ($d in 'fsr4_shaders', 'tools') { if (Test-Path "$InstallDir\$d") { Copy-Tree "$InstallDir\$d" "$pkg\$d" } }
-        if (Test-Path "$InstallDir\out\nvngx_dlss.dll") { Copy-Item "$InstallDir\out\nvngx_dlss.dll" "$pkg\out" }
-        Get-ChildItem $pkg -Recurse -Directory -Filter __pycache__ | Remove-Item -Recurse -Force
-        Set-Content -Encoding utf8 "$pkg\README-FIRST.txt" @'
-Bloodborne PC - portable Windows package
-
-1. Put your own Bloodborne v1.09 dump (the CUSA03173 folder with eboot.bin and sce_sys)
-   next to BloodborneLauncher.exe:
-      Bloodborne-PC\BloodborneLauncher.exe
-      Bloodborne-PC\CUSA03173\eboot.bin
-   The launcher finds it automatically. A dump elsewhere can be chosen with the folder button.
-2. Run BloodborneLauncher.exe, check the settings and press PLAY BLOODBORNE.
-
-Upgrading: extract over an existing install. Your game, saves (user\), bbport.ini and
-launcher-settings.json are not in this package, so they are kept.
-This package contains no game files.
-'@
+        foreach ($d in 'fsr4_shaders', 'tools') { if (Test-Path "$AssetsDir\$d") { Copy-Tree "$AssetsDir\$d" "$pkg\$d" } }
+        if (Test-Path "$AssetsDir\out\nvngx_dlss.dll") { Copy-Item "$AssetsDir\out\nvngx_dlss.dll" "$pkg\out" }
+        Get-ChildItem $pkg -Recurse -Directory -Filter __pycache__ | Remove-Item -Recurse -Force  # tools\python's too
+        # No readme: the launcher itself says to put the dump in CUSA03173 next to it.
         $zipPath = Join-Path $dist "Bloodborne-PC-$version.zip"
         if (Test-Path $zipPath) { Remove-Item $zipPath }
         Add-Type -AssemblyName System.IO.Compression.FileSystem

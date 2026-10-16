@@ -61,10 +61,15 @@ if [[ $game != "$(realpath "$original_game")" ]]; then
     mod_game=$game
     trap '"$PYTHON" -c '\''import shutil,sys; shutil.rmtree(sys.argv[1])'\'' "$mod_game"' EXIT
 fi
-"$PYTHON" scripts/prepare.py "$game" --out "$out"
-"$PYTHON" scripts/link_libc.py "$game" --out "$out"
-"$PYTHON" scripts/link_modules.py "$game" --out "$out"
-"$PYTHON" scripts/content_profile.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
+if "$PYTHON" scripts/prepare_stamp.py check "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"; then
+    echo 'Prepared image is current (BB_FORCE_PREPARE=1 rebuilds it)'
+else
+    "$PYTHON" scripts/prepare.py "$game" --out "$out"
+    "$PYTHON" scripts/link_libc.py "$game" --out "$out"
+    "$PYTHON" scripts/link_modules.py "$game" --out "$out"
+    "$PYTHON" scripts/content_profile.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
+    "$PYTHON" scripts/prepare_stamp.py write "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
+fi
 # Sizes chosen below for the previous launch are recomputed after an in-game restart.
 if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then
     unset BB_RENDER_RES BB_OUTPUT_RES BB_AUTO_RENDER_RES

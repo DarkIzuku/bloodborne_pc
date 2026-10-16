@@ -7,8 +7,10 @@
 #include <stdint.h>
 /* Reserves [start,end) once as a placeholder: nothing else in the process can take it. */
 int win_mem_space(uintptr_t start, uintptr_t end);
-/* Pagefile-backed section of size bytes (the physical pool) and a host view of all of it. */
+/* Pagefile-backed section of size bytes (the physical pool) and a host view of all of it.
+ * The pages are reserved only; win_mem_commit makes a range of the host view usable. */
 int win_mem_section(uint64_t size, void **backing);
+int win_mem_commit(void *at, uint64_t size);
 /* Called for each piece of a view that had to be remapped around a removed range; it must
  * re-apply the pieces' protection (a fresh view is read/write). */
 typedef void (*WinMemRestore)(uintptr_t start, uintptr_t end);
