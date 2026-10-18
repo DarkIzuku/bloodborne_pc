@@ -58,6 +58,7 @@ int main() {
         // Different pixels each pass exercise scheduler/staging reuse and avoid a
         // constant-colour false positive. Guest padding has a separate sentinel.
         std::vector<u8> expected(info.guest_size,0xa5);
+        std::vector<u8> defined(info.guest_size,0);
         std::memset(surface.mapped_data.data(),0xa5,info.guest_size);
         for (u32 mip=0; mip<levels; ++mip) {
             const auto& m=info.mips_layout[mip];
@@ -67,6 +68,7 @@ int main() {
                         for (u32 c=0; c<texel_bytes; ++c) {
                             const u32 at=m.offset+((layer*m.height+y)*m.pitch+x)*texel_bytes+c;
                             expected[at]=u8(x*7+y*11+layer*43+mip*17+pass*13+c);
+                            defined[at]=1;
                         }
         }
         std::memcpy(upload.mapped_data.data(),expected.data(),info.guest_size);
@@ -74,7 +76,9 @@ int main() {
         surface.Flush(0,info.guest_size);
         runtime.UploadImage(&image,&upload,copies);
         auto overlay=copies; // TileImageOver adjusts copy offsets, caller owns them
-        tiles.TileImageOver(image,overlay,&surface,0);
+        const bool preserve_padding=(pass%2)==0;
+        if(preserve_padding) tiles.TileImageOver(image,overlay,&surface,0);
+        else tiles.TileImage(image,overlay,&surface,0);
         const auto [linear,offset]=tiles.DetileImage(&surface,0,info);
         const vk::BufferCopy copy{offset,0,info.guest_size};
         runtime.CopyBuffer(linear,&readback,std::span{&copy,1});
@@ -90,6 +94,8 @@ int main() {
         scheduler.Finish();
         readback.Invalidate(0,info.guest_size);
         for (u32 i=0; i<info.guest_size; ++i) {
+            // Ordinary TileImage owns visible pixels only; TileImageOver also preserves padding.
+            if(!preserve_padding && !defined[i]) continue;
             if (readback.mapped_data[i]!=expected[i]) {
                 std::fprintf(stderr,"Mismatch: pass %u byte %u, got %u expected %u\n",
                     pass,i,readback.mapped_data[i],expected[i]);
@@ -100,5 +106,5 @@ int main() {
     }
     }
     }
-    std::puts("PASS: Vulkan tiled writeback, 8/16/32/64/128 bits, micro/macro tiles, padded rows, two mips/layers and eight reuse cycles");
+    std::puts("PASS: Vulkan TileImage/TileImageOver round trips, five formats, micro/macro tiles, mips/layers and reuse");
 }
