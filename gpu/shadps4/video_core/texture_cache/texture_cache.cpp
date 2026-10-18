@@ -1171,6 +1171,7 @@ void TextureCache::RegisterImage(ImageId image_id) {
     BbStats::live_images.fetch_add(1, std::memory_order_relaxed);
     image.lru_id = lru_cache.Insert(image_id, gc_tick);
     image.lru_touched_tick = gc_tick;
+    image.gc_last_use_second = gc_second;
     ForEachPage(image.info.guest_address, image.info.guest_size,
                 [this, image_id](u64 page) { page_table[page].push_back(image_id); });
 }
@@ -1401,6 +1402,10 @@ void TextureCache::GarbageCollectImages() {
         return !e || e[0] != '0';
     }();
     unsigned tiled_writebacks = 0;
+    static const bool eager_writeback = [] {
+        const char* env = std::getenv("BB_GC_EAGER_WRITEBACK");
+        return env && env[0] == '1';
+    }();
     const auto clean_up = [&](ImageId image_id) {
         if (num_deletions == 0 || ++visited > 256) {
             return true;
@@ -1427,6 +1432,13 @@ void TextureCache::GarbageCollectImages() {
         }
         bool written_back = false;
         if (tiled && download) {
+            if (!GcPolicy::AllowTiledWriteback(image.gc_last_use_second, second,
+                                              total_used_memory >= critical_gc_memory,
+                                              eager_writeback)) {
+                lru_cache.Touch(image.lru_id, gc_tick);
+                BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
             // One costly writeback per collector pass, with bounded retries.
             if (!tiled_writeback || tiled_writebacks || gc_tick < image.writeback_retry_tick) {
                 lru_cache.Touch(image.lru_id, gc_tick);
@@ -1541,6 +1553,7 @@ void TextureCache::RunGarbageCollector() {
 }
 
 void TextureCache::TouchImage(const Image& image) {
+    image.gc_last_use_second = gc_second;
     if (image.lru_touched_tick == gc_tick) {
         return;
     }

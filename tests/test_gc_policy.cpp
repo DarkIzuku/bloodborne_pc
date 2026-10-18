@@ -24,4 +24,20 @@ int main() {
     assert(!WritebackMipChain(true,2));
     assert(!WritebackMipChain(false,0));
     assert(!WritebackMipChain(false,17));
+    assert(!AllowTiledWriteback(100,159,false,false));
+    assert(AllowTiledWriteback(100,160,false,false));
+    assert(!AllowTiledWriteback(0,160,false,false));
+    assert(!AllowTiledWriteback(200,160,true,true));
+    assert(AllowTiledWriteback(100,101,true,false));
+    assert(AllowTiledWriteback(100,101,false,true));
+    assert(!AllowTiledWriteback(max,max-1,false,false));
+    // A revisited area must not churn render targets under ordinary pressure.
+    unsigned downloads=0;
+    std::uint64_t last_use=100;
+    for(std::uint64_t now=100;now<700;++now) {
+        if(now%10==0) last_use=now;
+        downloads+=AllowTiledWriteback(last_use,now,false,false);
+    }
+    assert(downloads==0);
+    assert(AllowTiledWriteback(last_use,750,false,false));
 }

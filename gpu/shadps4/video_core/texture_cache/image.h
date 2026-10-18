@@ -164,6 +164,7 @@ public:
     /// bbport: gc tick of the last LRU touch; skips the LRU list (a cache miss) when current.
     mutable u64 lru_touched_tick = ~0ULL;
     u64 tick_accessed_last{};
+    mutable u64 gc_last_use_second{}; ///< Collector seconds, distinct from GPU timeline ticks.
     ImageId depth_id{};
     u64 depth_uid{};
     u64 image_uid{};
