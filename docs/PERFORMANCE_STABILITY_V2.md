@@ -34,3 +34,10 @@ regression detects the previous leak and passes with the releases restored.
 Standalone renderer targets now inherit the OneCore library needed for Windows
 file mappings; this corrects a pre-existing test-link omission without runtime
 logic changes. Full build and hosted checks are reported with the release.
+
+The optional GPU regression executables now use the production Vulkan-Hpp ABI
+(`NDEBUG`) with independent test assertions. Mixing debug dispatch-table layouts
+with the release library caused a null function-pointer call in the camera test;
+this test-only mismatch is corrected without changing the production renderer.
+Camera/object motion, scene-proxy resolution, TAA/RCAS and all 55 NGX model/quality
+combinations are exercised in three NGX recording modes using synthetic images.

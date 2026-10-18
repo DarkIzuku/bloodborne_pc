@@ -133,7 +133,7 @@ jobs:
         shell: msys2 {0}
         run: |
           set -e
-          ninja -C out/gpu liverpool-tasks-test early-z-test gc-policy-test tiled-writeback-test
+          ninja -C out/gpu liverpool-tasks-test early-z-test gc-policy-test tiled-writeback-test camera-motion-test scene-resolution-test taa-shader-test
           ctest --test-dir out/gpu -R '^(liverpool-tasks|early-z|gc-policy)$' --no-tests=error --output-on-failure
           for shader in out/gpu/early-z-shaders/*.spv; do spirv-val --target-env vulkan1.3 "$shader"; done
           # Hosted runners lack a supported GPU; TileImage readback runs locally.
