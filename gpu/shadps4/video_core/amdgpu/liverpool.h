@@ -201,6 +201,7 @@ public:
 #endif
 
 private:
+    friend struct LiverpoolTaskTest;
     struct Task {
         struct promise_type {
             auto get_return_object() {
