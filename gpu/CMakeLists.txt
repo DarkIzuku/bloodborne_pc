@@ -229,7 +229,8 @@ target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic
 if (WIN32)
     # Windows headers: no min/max macros, no winsock 1 clash; Windows 10+ APIs (SetThreadDescription).
     target_compile_definitions(bbgpu PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0A00)
-    target_link_libraries(bbgpu PUBLIC xbyak::xbyak)
+    # IOFile's Windows mappings require OneCore, including standalone renderer tests.
+    target_link_libraries(bbgpu PUBLIC xbyak::xbyak onecore)
     # bb-probe.exe links libbbgpu.a with these (out/gpu/bbgpu_link.txt, one argument per line,
     # in link order): the static library's transitive dependencies.
     include(cmake/LinkClosure.cmake)

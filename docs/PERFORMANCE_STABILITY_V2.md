@@ -26,3 +26,11 @@ tiling paths. Hosted CPU tests and local GPU readback are reported separately.
 Visual gameplay, long-session memory and comparative FPS need real playtesting;
 synthetic results do not establish a universal performance gain. Frame Generation
 is not included.
+
+Local focused checks passed: 64 SPIRV-Tools shader validations, motion shader/cache
+checks and actual tiling readback in async, sync and direct recording modes.
+The Python regression suite passed 95 tests with one skip. The shared decoder
+regression detects the previous leak and passes with the releases restored.
+Standalone renderer targets now inherit the OneCore library needed for Windows
+file mappings; this corrects a pre-existing test-link omission without runtime
+logic changes. Full build and hosted checks are reported with the release.
