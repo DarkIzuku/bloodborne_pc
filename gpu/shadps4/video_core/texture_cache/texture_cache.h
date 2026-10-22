@@ -102,6 +102,7 @@ public:
     /// FindImage also does happens in UpdateImage (FindTexture), which every binding reaches.
     void MarkFound(ImageId image_id) {
         slot_images[image_id].tick_accessed_last = scheduler.CurrentTick();
+        slot_images[image_id].gc_last_use_second = gc_second;
     }
 
     TileManager& GetTileManager() noexcept {

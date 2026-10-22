@@ -17,7 +17,7 @@
 
 static void CheckMetadata() {
     using namespace Shader;
-    const auto load = [](bool motion, u32 version) {
+    const auto load = [](bool motion, u32 version, u32 metadata = 8) {
         Info original{};
         original.hw_stage = HwStage::Vertex;
         original.sw_stage = SwStage::Vertex;
@@ -29,7 +29,7 @@ static void CheckMetadata() {
         const auto hash = HashCombine(original.pgm_hash, u64{2});
         Serialization::Archive output;
         Serialization::Writer writer{output};
-        writer.Write(u32{7}); // Unchanged metadata schema.
+        writer.Write(metadata); // Fragment depth ordering metadata schema.
         writer.Write(version);
         writer.Write(hash);
         writer.Write(size_t{2});
@@ -54,6 +54,8 @@ static void CheckMetadata() {
     assert(load(false, 7));
     assert(!load(false, 8));
     assert(!load(true, 99));
+    assert(!load(false, 7, 7)); // Old raw RuntimeInfo layouts cannot be reused.
+    assert(!load(true, 8, 7));
 }
 
 static void CheckMotionInterface(const std::vector<u32>& code, bool vertex_motion) {

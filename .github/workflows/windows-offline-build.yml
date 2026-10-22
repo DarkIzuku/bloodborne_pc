@@ -4,7 +4,7 @@ name: Public Stability Windows Build
 on:
   workflow_dispatch:
   push:
-    branches: [public-stability-dlss-v1, button-prompts, update-stability]
+    branches: [public-stability-dlss-v1, public-performance-stability-v2, button-prompts, update-stability, update-performance-v2]
     paths:
       - "src/**"
       - "gpu/**"
@@ -51,6 +51,7 @@ jobs:
             mingw-w64-clang-x86_64-glslang
             mingw-w64-clang-x86_64-spirv-cross
             mingw-w64-clang-x86_64-spirv-headers
+            mingw-w64-clang-x86_64-spirv-tools
             mingw-w64-clang-x86_64-vulkan-headers
             mingw-w64-clang-x86_64-vulkan-loader
             mingw-w64-clang-x86_64-vulkan-memory-allocator
@@ -127,6 +128,15 @@ jobs:
           ctest --test-dir out/gpu -R '^(gc-policy|user-data|memory-notifications|trophies)$' --no-tests=error --output-on-failure
           python tests/gpu_assert_crash_dump.py out/gpu/gpu-assert-crash-test.exe
           python tests/probe_crash_dump.py out/bb-probe.exe
+
+      - name: Verify renderer performance and lifetime regressions
+        shell: msys2 {0}
+        run: |
+          set -e
+          ninja -C out/gpu liverpool-tasks-test early-z-test gc-policy-test tiled-writeback-test camera-motion-test scene-resolution-test taa-shader-test
+          ctest --test-dir out/gpu -R '^(liverpool-tasks|early-z|gc-policy)$' --no-tests=error --output-on-failure
+          for shader in out/gpu/early-z-shaders/*.spv; do spirv-val --target-env vulkan1.3 "$shader"; done
+          # Hosted runners lack a supported GPU; TileImage readback runs locally.
 
       - name: Fetch DLSS 310.9.1
         shell: msys2 {0}

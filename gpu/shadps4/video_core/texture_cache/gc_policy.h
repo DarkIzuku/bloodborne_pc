@@ -12,6 +12,14 @@ constexpr bool CompletedUse(std::uint64_t access, std::uint64_t recording,
                             bool gpu_complete) {
     return access < recording && gpu_complete;
 }
+// Ordinary pressure must not synchronously download an active area's render targets.
+// Critical pressure retains bounded emergency writeback, never dropping their contents.
+constexpr bool AllowTiledWriteback(std::uint64_t last_use_second, std::uint64_t now_second,
+                                  bool critical, bool eager) {
+    if (now_second < last_use_second) return false;
+    return critical || eager ||
+           (last_use_second != 0 && now_second - last_use_second >= 60);
+}
 // Compare by division before multiplying untrusted layout dimensions.
 constexpr bool FullMip(std::uint32_t pitch, std::uint32_t height,
                        std::uint32_t layers, std::uint32_t bytes,

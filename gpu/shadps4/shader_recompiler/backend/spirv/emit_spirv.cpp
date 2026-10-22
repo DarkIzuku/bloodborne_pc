@@ -417,7 +417,7 @@ void DefineEntryPoint(const Info& info, EmitContext& ctx, Id main) {
                                        : spv::ExecutionMode::VertexOrderCw);
         break;
     }
-    case SwStage::Fragment:
+    case SwStage::Fragment: {
         execution_model = spv::ExecutionModel::Fragment;
         if (ctx.profile.lower_left_origin_mode) {
             ctx.AddExecutionMode(main, spv::ExecutionMode::OriginLowerLeft);
@@ -430,7 +430,16 @@ void DefineEntryPoint(const Info& info, EmitContext& ctx, Id main) {
         if (info.stores.GetAny(IR::Attribute::Depth)) {
             ctx.AddExecutionMode(main, spv::ExecutionMode::DepthReplacing);
         }
+        // Emulated clipping must precede depth/stencil writes. Explicit depth and
+        // stencil exports also retain the late path. Never force early-Z globally.
+        if (ctx.runtime_info.hw.fs.depth_before_shader &&
+            !ctx.runtime_info.hw.fs.clip_distance_emulation &&
+            !info.stores.GetAny(IR::Attribute::Depth) &&
+            !info.stores.GetAny(IR::Attribute::StencilRef)) {
+            ctx.AddExecutionMode(main, spv::ExecutionMode::EarlyFragmentTests);
+        }
         break;
+    }
     case SwStage::Geometry:
         execution_model = spv::ExecutionModel::Geometry;
         ctx.AddExecutionMode(main, GetInputPrimitiveType(ctx.runtime_info.hw.gs.in_primitive));

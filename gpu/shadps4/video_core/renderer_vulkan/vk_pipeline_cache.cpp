@@ -288,6 +288,12 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         info.hw.fs.addr_flags = regs.ps_input_addr;
         info.hw.fs.num_inputs = regs.num_interp;
         info.hw.fs.front_face_all_bits = regs.barycentric_control.front_face_all_bits;
+        // Match the game's depth ordering. The opt-out is for controlled A/B diagnosis.
+        static const bool early_z = [] {
+            const char* env = std::getenv("BB_EARLY_Z");
+            return !env || env[0] != '0';
+        }();
+        info.hw.fs.depth_before_shader = early_z && regs.depth_shader_control.depth_before_shader;
         info.hw.fs.num_samples =
             regs.ps_input_addr.sample_coverage_ena && regs.ps_input_ena.sample_coverage_ena
                 ? regs.aa_config.NumSamples()

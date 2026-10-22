@@ -232,7 +232,8 @@ target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic
 if (WIN32)
     # Windows headers: no min/max macros, no winsock 1 clash; Windows 10+ APIs (SetThreadDescription).
     target_compile_definitions(bbgpu PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0A00)
-    target_link_libraries(bbgpu PUBLIC xbyak::xbyak)
+    # IOFile's Windows mappings require OneCore, including standalone renderer tests.
+    target_link_libraries(bbgpu PUBLIC xbyak::xbyak onecore)
     # bb-probe.exe links libbbgpu.a with these (out/gpu/bbgpu_link.txt, one argument per line,
     # in link order): the static library's transitive dependencies.
     include(cmake/LinkClosure.cmake)
@@ -279,15 +280,19 @@ target_include_directories(settings-test PRIVATE .. shim)
 
 add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../tests/test_scene_resolution.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(scene-resolution-test PRIVATE shim shadps4 third_party/gcn/include)
+# Vulkan-Hpp's dispatch base changes layout with NDEBUG. Match the production ABI;
+# these GPU tests keep their assertions separately through test_assert.h.
 # The test's Vulkan-Hpp inline methods have a different set of platform extensions
 # from vk_platform.cpp. Keep them local and use an explicit dispatcher in the test.
-target_compile_options(scene-resolution-test PRIVATE -UNDEBUG -fPIC)
+target_compile_options(scene-resolution-test PRIVATE -fPIC)
+target_compile_definitions(scene-resolution-test PRIVATE NDEBUG)
 set_source_files_properties(../tests/test_scene_resolution.cpp PROPERTIES
     COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
 target_link_libraries(scene-resolution-test PRIVATE bbgpu)
 add_executable(taa-shader-test EXCLUDE_FROM_ALL ../tests/test_taa_shader.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(taa-shader-test PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include)
-target_compile_options(taa-shader-test PRIVATE -UNDEBUG -fPIC)
+target_compile_options(taa-shader-test PRIVATE -fPIC)
+target_compile_definitions(taa-shader-test PRIVATE NDEBUG)
 set_source_files_properties(../tests/test_taa_shader.cpp PROPERTIES
     COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
 target_link_libraries(taa-shader-test PRIVATE bbgpu)
@@ -295,7 +300,8 @@ add_dependencies(taa-shader-test host_shaders)
 
 add_executable(camera-motion-test EXCLUDE_FROM_ALL ../tests/test_camera_motion.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(camera-motion-test PRIVATE shim shadps4 ${SHADER_INCLUDE} third_party/gcn/include)
-target_compile_options(camera-motion-test PRIVATE -UNDEBUG -fPIC)
+target_compile_options(camera-motion-test PRIVATE -fPIC)
+target_compile_definitions(camera-motion-test PRIVATE NDEBUG)
 target_link_libraries(camera-motion-test PRIVATE bbgpu)
 add_dependencies(camera-motion-test host_shaders)
 
@@ -317,6 +323,18 @@ add_executable(gc-policy-test EXCLUDE_FROM_ALL ../tests/test_gc_policy.cpp)
 target_include_directories(gc-policy-test PRIVATE shadps4)
 target_compile_options(gc-policy-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 add_test(NAME gc-policy COMMAND gc-policy-test)
+foreach(test IN ITEMS liverpool-tasks early-z)
+    string(REPLACE "-" "_" test_source ${test})
+    add_executable(${test}-test EXCLUDE_FROM_ALL ../tests/test_${test_source}.cpp ../tests/test_gpu_runtime_stubs.cpp)
+    target_include_directories(${test}-test PRIVATE shim shadps4 third_party/gcn/include)
+    target_compile_options(${test}-test PRIVATE -UNDEBUG)
+    target_link_libraries(${test}-test PRIVATE bbgpu)
+    if(WIN32)
+        target_link_libraries(${test}-test PRIVATE winmm ws2_32 psapi onecore)
+    endif()
+    add_test(NAME ${test} COMMAND ${test}-test)
+    set_tests_properties(${test} PROPERTIES TIMEOUT 120)
+endforeach()
 add_executable(tiled-writeback-test EXCLUDE_FROM_ALL
     ../tests/test_tiled_writeback.cpp ../tests/test_gpu_runtime_stubs.cpp)
 target_include_directories(tiled-writeback-test PRIVATE shim shadps4 third_party/gcn/include)

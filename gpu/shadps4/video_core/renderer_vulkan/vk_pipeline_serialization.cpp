@@ -18,7 +18,7 @@ namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
 static constexpr u32 ShaderBinaryVersion = 7u; // bbport: interpolated integer fix (Pascal)
 static constexpr u32 MotionShaderBinaryVersion = 8u; // runtime address descriptor, set 1
-static constexpr u32 ShaderMetaVersion = 7u; // bbport: ImageResource::needs_native
+static constexpr u32 ShaderMetaVersion = 8u; // Serialized fragment depth ordering.
 static constexpr u32 PipelineKeyVersion = 6u; // pointer-free pipeline state + generated fragment
 } // namespace Serialization
 
