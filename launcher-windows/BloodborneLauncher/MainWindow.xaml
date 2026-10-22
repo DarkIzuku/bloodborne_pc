@@ -554,8 +554,7 @@
                             <Border Style="{StaticResource CardStyle}">
                                 <StackPanel>
                                     <CheckBox x:Name="ModsEnabledCheck" Content="Enable mods" />
-                                    <TextBlock Text="Mods folder" Margin="0,14,0,5" />
-                                    <TextBlock TextWrapping="Wrap" x:Name="ModsFolderText" Foreground="#A7AFB6" />
+                                    <StackPanel x:Name="ModsList" Margin="20,8,0,0" IsEnabled="{Binding IsChecked, ElementName=ModsEnabledCheck}" />
                                     <Button Content="Open Mods Folder" Width="170" HorizontalAlignment="Left" Margin="0,12,0,0" Style="{StaticResource SmallButton}" Click="OpenMods_Click" />
                                 </StackPanel>
                             </Border>

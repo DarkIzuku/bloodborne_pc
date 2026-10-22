@@ -35,14 +35,14 @@ def content_root(folder):
 
     Accepted layouts: <mod>/dvdroot_ps4, <mod>/app0/dvdroot_ps4, <mod>/CUSA03173/dvdroot_ps4,
     one wrapper folder around any of these (an archive extracted into a folder of its name), and
-    the game's folders without dvdroot_ps4 (<mod>/chr, <mod>/parts, ...)."""
+    the game's folders without dvdroot_ps4 (<mod>/chr, <mod>/parts, ...). A modified eboot.bin
+    or shadPS4 patch XML files alone also make a mod: patches.py turns them into patch writes."""
     folder = Path(folder)
     if not folder.is_dir():
         return None
     for wrapper in ('', 'app0', 'CUSA03173'):
         base = child(folder, wrapper) if wrapper else folder
-        dvdroot = child(base, 'dvdroot_ps4')
-        if dvdroot.is_dir():
+        if child(base, 'dvdroot_ps4').is_dir() or child(base, 'eboot.bin').is_file():
             return base, ''
     entries = [e for e in folder.iterdir() if not e.name.startswith('.')]
     folders = [e for e in entries if e.is_dir()]
@@ -51,7 +51,7 @@ def content_root(folder):
     if len(folders) == 1 and not [e for e in entries if e.is_file() and
                                   e.suffix.casefold() not in ('.txt', '.md', '.jpg', '.png', '.ini')]:
         return content_root(folders[0])
-    return None
+    return (folder, '') if any(folder.rglob('*.xml')) else None
 
 
 def discover(root):
@@ -95,10 +95,10 @@ def mod_files(folder):
         for name in sorted(files):
             source = directory / name
             relative = Path(prefix) / source.relative_to(root) if prefix else source.relative_to(root)
-            # Readme/metadata stay outside the mounted game. This loader handles assets;
-            # executable patches use the existing patch compiler, with address validation.
+            # Readme/metadata stay outside the mounted game. This loader handles assets; a
+            # modified eboot.bin becomes patch writes (patches.py eboot_mod_writes), the original stays.
             if relative.parts[0].casefold() != 'dvdroot_ps4':
-                if relative.parts[0].casefold() in ('eboot.bin', 'sce_module', 'sce_sys'):
+                if relative.parts[0].casefold() in ('sce_module', 'sce_sys'):
                     raise ValueError(f'Executable/system replacement is unsupported: {source}')
                 continue
             if not source.is_file():

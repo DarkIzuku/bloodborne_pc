@@ -1,5 +1,5 @@
 # Builds the Windows package from this repository: the runtime (build.sh in MSYS2 CLANG64) and
-# BloodborneLauncher.exe, then a portable zip named by version (dist\Bloodborne-PC-<git describe>.zip).
+# BloodborneLauncher.exe, then a portable zip named by version (dist\UPDATE.<version>-Bloodborne-PC.zip).
 # Optionally upgrades an install in place too.
 # Only what a player needs is copied: no setup.bat, __pycache__ or exe backups.
 #
@@ -120,14 +120,16 @@ if ($InstallDir) {
     foreach ($f in 'setup.bat', 'run.bat', 'build.sh', 'README.md', 'README-FIRST.txt', 'LICENSE') { Remove-Item "$InstallDir\$f" -Force -ErrorAction SilentlyContinue }
     Copy-Item $exe $InstallDir -Force
     Copy-Runtime $InstallDir
+    # The upgraded launcher reads mods from this repository's mods folder (MainWindow FindModsDir).
+    Set-Content "$InstallDir\out\repo_dir.txt" $repo
     Write-Host 'Upgraded'
 }
 
 if (-not $NoZip) {
     Write-Host '== Packaging'
-    # The last tag, commits since it and the commit, e.g. v0.4.0-12-g105b766 (-dirty: uncommitted changes).
-    $version = git -C $repo describe --tags --always --dirty 2>$null
-    if (-not $version) { $version = Get-Date -Format 'yyyy-MM-dd' }
+    # The number of the last tag, e.g. v0.4.1 from v0.4.1-stability.4.
+    $version = git -C $repo describe --tags --abbrev=0 2>$null
+    $version = if ($version -match '^v?\d+(\.\d+)*') { $Matches[0] } else { Get-Date -Format 'yyyy-MM-dd' }
     $stage = Join-Path ([IO.Path]::GetTempPath()) "bbpc-package-$([Guid]::NewGuid().ToString('N'))"
     $pkg = Join-Path $stage 'Bloodborne-PC'
     try {
@@ -139,7 +141,7 @@ if (-not $NoZip) {
         if (Test-Path "$AssetsDir\out\nvngx_dlss.dll") { Copy-Item "$AssetsDir\out\nvngx_dlss.dll" "$pkg\out" }
         Get-ChildItem $pkg -Recurse -Directory -Filter __pycache__ | Remove-Item -Recurse -Force  # tools\python's too
         # No readme: the launcher itself says to put the dump in CUSA03173 next to it.
-        $zipPath = Join-Path $dist "Bloodborne-PC-$version.zip"
+        $zipPath = Join-Path $dist "UPDATE.$version-Bloodborne-PC.zip"
         if (Test-Path $zipPath) { Remove-Item $zipPath }
         Add-Type -AssemblyName System.IO.Compression.FileSystem
         [IO.Compression.ZipFile]::CreateFromDirectory($stage, $zipPath, [IO.Compression.CompressionLevel]::Optimal, $false)

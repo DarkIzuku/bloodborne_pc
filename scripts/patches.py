@@ -208,12 +208,12 @@ def compile_patches(xml, names, app_version, segments):
 BLOODBORNE_IDS={'CUSA00207','CUSA00208','CUSA00900','CUSA01363','CUSA03173','CUSA03023'}
 
 
-def external_patches(directory, app_version='01.09', exclude=Path(__file__).resolve().parent.parent/'patches/Bloodborne.xml'):
+def external_patches(directory, app_version='01.09', exclude=Path(__file__).resolve().parent.parent/'patches/Bloodborne.xml', pattern='*.xml'):
     """[(key, file, metadata)] of eboot patches for this version in directory/*.xml.
     key is "<file name>/<patch name>" (the launcher's selection, patches.json)."""
     found=[]
     directory=Path(directory)
-    for path in sorted(directory.glob('*.xml')) if directory.is_dir() else []:
+    for path in sorted(directory.glob(pattern)) if directory.is_dir() else []:
         if path.resolve()==Path(exclude).resolve(): continue  # the built-in file (patches/ in a checkout)
         try:
             root=ET.parse(path).getroot()
@@ -259,8 +259,89 @@ def compile_external(selected, segments):
     return writes
 
 
+LOAD_TYPES=(1,0x61000010)
+
+
+def memory_image(data):
+    """(loaded image, (vaddr, memsz, filesz) of each load segment) of a plaintext SELF or an ELF."""
+    if data[:4]==b'\x7fELF':
+        elf=data
+        phoff,=struct.unpack_from('<Q',elf,0x20)
+        phnum,=struct.unpack_from('<H',elf,0x38)
+        ph=[dict(zip(('type','flags','offset','vaddr','paddr','filesz','memsz','align'),
+                     struct.unpack_from('<IIQQQQQQ',elf,phoff+i*56))) for i in range(phnum)]
+    else:
+        from prepare import parse_self
+        elf,_,ph,_,_=parse_self(data)
+    loads=[p for p in ph if p['type'] in LOAD_TYPES]
+    size=max(p['vaddr']+p['memsz'] for p in loads)
+    if size>512*1024*1024: raise ValueError('memory image exceeds 512 MiB')
+    image=bytearray(size)
+    for p in loads:
+        if p['filesz']>p['memsz'] or p['offset']+p['filesz']>len(elf):
+            raise ValueError('truncated or invalid load segment')
+        image[p['vaddr']:p['vaddr']+p['filesz']]=elf[p['offset']:p['offset']+p['filesz']]
+    return image,[(p['vaddr'],p['memsz'],p['filesz']) for p in loads]
+
+
+# A byte-patched eboot differs in a few places; more means another version or a rebuilt executable.
+EBOOT_MOD_LIMIT=4*1024*1024
+
+
+def eboot_mod_writes(original, modified, chunk=1<<16):
+    """Writes that turn the original eboot.bin into a modified one with the same segment layout
+    (bytes patched in place, as patch XML would). Other layouts raise ValueError."""
+    try:
+        base,base_loads=memory_image(original)
+        mod,mod_loads=memory_image(modified)
+    except (ValueError,struct.error) as error:
+        raise ValueError(f'not a plaintext PS4 executable ({error})')
+    if mod_loads!=base_loads:
+        raise ValueError('segment layout differs from the 1.09 eboot.bin (another version, or added code)')
+    writes,total=[],0
+    for start in range(0,len(base),chunk):
+        a,b=base[start:start+chunk],mod[start:start+chunk]
+        if a==b: continue
+        i=0
+        while i<len(a):
+            if a[i]==b[i]:
+                i+=1
+                continue
+            j=i
+            while j<len(a) and a[j]!=b[j]: j+=1
+            # A run continues into the next chunk as a separate write; the loader applies both.
+            writes.append((start+i,bytes(b[i:j])))
+            total+=j-i
+            if total>EBOOT_MOD_LIMIT:
+                raise ValueError('changes too much of the executable to be a 1.09 patch')
+            i=j
+    return writes
+
+
+def mod_patches(mods_dir, mods_config, app_version, game, exclude):
+    """(patch XML entries, writes) from the enabled mods: their *.xml files (any depth), loose
+    *.xml files in the mods folder, and a modified eboot.bin (eboot_mod_writes)."""
+    from mods import child, content_root, selected
+    found=external_patches(mods_dir,app_version,exclude)
+    writes=[]
+    for name in selected(mods_dir,mods_config):
+        folder=Path(mods_dir)/name
+        found+=external_patches(folder,app_version,exclude,'**/*.xml')
+        eboot=child(content_root(folder)[0],'eboot.bin')
+        if eboot.is_file():
+            try:
+                ours=eboot_mod_writes((Path(game)/'eboot.bin').read_bytes(),eboot.read_bytes())
+            except ValueError as error:
+                raise ValueError(f'mod {name}: eboot.bin: {error}')
+            print(f'Patches: mod {name} eboot.bin ({len(ours)} writes, {sum(len(d) for _,d in ours)} bytes)')
+            writes+=ours
+    return found,writes
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--mods-dir',type=Path,help='mods folder: patch XML files and modified eboot.bin of enabled mods')
+    p.add_argument('--mods-config',type=Path,help='mods.json: enabled/disabled mods')
     p.add_argument('--patches-dir',type=Path,help='third-party patch XML files (shadPS4 format)')
     p.add_argument('--patches-config',type=Path,help='patches.json: enabled/disabled external patches')
     p.add_argument('--xml',type=Path,default=Path(__file__).resolve().parent.parent/'patches/Bloodborne.xml')
@@ -311,10 +392,14 @@ def main():
             writes+=compile_patches(a.xml,[heap],a.app_version,segments)
             names.append(heap)
         print(f'Patches: scene {size[0]}x{size[1]}; UI {ui[0]}x{ui[1]}')
-    if a.patches_dir:
-        # After the built-in ones: an external patch of the same bytes wins.
-        writes+=compile_external(external_selection(external_patches(a.patches_dir,a.app_version,a.xml),
-                                                    a.patches_config),segments)
+    found=external_patches(a.patches_dir,a.app_version,a.xml) if a.patches_dir else []
+    eboot_writes=[]
+    if a.mods_dir:
+        mod_found,eboot_writes=mod_patches(a.mods_dir,a.mods_config,a.app_version,a.game_dir,a.xml)
+        found+=mod_found
+    # After the built-in ones: an external patch of the same bytes wins, a mod's eboot.bin last.
+    writes+=compile_external(external_selection(found,a.patches_config),segments)
+    writes+=eboot_writes
     writes += render_pool_writes((a.out/'eboot.elf').read_bytes(), writes)
     from redzone import patch_conflicts
     writes = patch_conflicts(writes, a.out/'boot-linked.bin')

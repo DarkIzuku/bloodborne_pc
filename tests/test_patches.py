@@ -164,6 +164,51 @@ class ExternalPatchTests(unittest.TestCase):
         self.assertEqual(external_patches(XML.parent), [])
 
 
+def tiny_elf(code, vaddr=0x1000):
+    """An ELF with one load segment holding `code` at `vaddr`."""
+    header = bytearray(0x100)
+    header[:4] = b'\x7fELF'
+    struct.pack_into('<Q', header, 0x20, 0x40)
+    struct.pack_into('<H', header, 0x38, 1)
+    struct.pack_into('<IIQQQQQQ', header, 0x40, 1, 5, 0x100, vaddr, vaddr, len(code), len(code), 0x1000)
+    return bytes(header) + code
+
+
+class ModEbootTests(unittest.TestCase):
+    def test_in_place_changes_become_writes(self):
+        code = bytes(0x30000)
+        modified = bytearray(code)
+        modified[5:7] = b'\xaa\xbb'
+        modified[0x1effe:0x1f002] = b'\x01\x02\x03\x04'  # image 0x1fffe: crosses a diff chunk
+        writes = patches.eboot_mod_writes(tiny_elf(code), tiny_elf(bytes(modified)))
+        self.assertEqual(writes, [(0x1005, b'\xaa\xbb'), (0x1fffe, b'\x01\x02'), (0x20000, b'\x03\x04')])
+        self.assertEqual(patches.eboot_mod_writes(tiny_elf(code), tiny_elf(code)), [])
+
+    def test_other_layout_or_format_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'segment layout'):
+            patches.eboot_mod_writes(tiny_elf(bytes(64)), tiny_elf(bytes(65)))
+        with self.assertRaisesRegex(ValueError, 'plaintext'):
+            patches.eboot_mod_writes(tiny_elf(bytes(64)), b'not an executable')
+
+    def test_enabled_mods_contribute_xml_and_eboot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            game, mods = root / 'game', root / 'mods'
+            game.mkdir()
+            (game / 'eboot.bin').write_bytes(tiny_elf(bytes(16)))
+            (mods / 'A' / 'xml').mkdir(parents=True)
+            (mods / 'A' / 'eboot.bin').write_bytes(tiny_elf(b'\x90' + bytes(15)))
+            (mods / 'A' / 'xml' / 'a.xml').write_text(EXTERNAL)
+            (mods / 'B').mkdir()
+            (mods / 'B' / 'b.xml').write_text(EXTERNAL)
+            (mods / 'loose.xml').write_text(EXTERNAL)
+            config = root / 'mods.json'
+            config.write_text('{"disabled": ["B"]}')
+            found, writes = patches.mod_patches(mods, config, '01.09', game, XML)
+            self.assertEqual(sorted({key.split('/')[0] for key, _, _ in found}), ['a.xml', 'loose.xml'])
+            self.assertEqual(writes, [(0x1000, b'\x90')])
+
+
 class IntelTonemapTests(unittest.TestCase):
     def cpuinfo(self, vendor):
         path = Path(tempfile.mkdtemp()) / 'cpuinfo'

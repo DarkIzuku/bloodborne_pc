@@ -4,10 +4,12 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media.Imaging;
+using System.Xml.Linq;
 
 namespace BloodborneLauncher;
 
@@ -78,6 +80,7 @@ public partial class MainWindow : Window
 
     readonly string root;
     readonly string statePath;
+    readonly string modsDir;
     LauncherState state = new();
     bool syncing;
     bool gameRunning;
@@ -87,7 +90,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         root = FindProjectRoot();
         statePath = Path.Combine(root, "launcher-settings.json");
-        ModsFolderText.Text = Path.Combine(root, "mods");
+        modsDir = FindModsDir(root);
         ConfigureCameraChoices();
         ConfigureGraphicsChoices();
         LoadState();
@@ -106,6 +109,18 @@ public partial class MainWindow : Window
                 return Path.TrimEndingDirectorySeparator(dir.FullName);
         }
         return AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+    }
+
+    // An install upgraded by build-launcher.ps1 records the repository (out\repo_dir.txt) and uses its mods folder.
+    static string FindModsDir(string root)
+    {
+        try
+        {
+            string repoMods = Path.Combine(File.ReadAllText(Path.Combine(root, "out", "repo_dir.txt")).Trim(), "mods");
+            if (Directory.Exists(repoMods)) return repoMods;
+        }
+        catch { }
+        return Path.Combine(root, "mods");
     }
 
     static string NormalizeDlssModel(string value)
@@ -143,7 +158,6 @@ public partial class MainWindow : Window
         state.DlssModel = NormalizeDlssModel(ReadIniValue("dlss_preset") ?? state.DlssModel);
         // Migrate retired or malformed frame-rate selections before displaying or launching.
         state.Fps = NormalizeFps(state.Fps);
-        if (RequiresVSync(state.Fps)) state.PresentMode = "Fifo";
         string? mirror = ReadIniValue("change_appearance");
         if (mirror != null) state.ChangeAppearance = mirror == "1";
         string? rebirth = ReadIniValue("rebirth");
@@ -171,16 +185,6 @@ public partial class MainWindow : Window
     }
 
     static string NormalizeFps(string? value) => value is "30" or "60" or "90" or "120" or "uncap" ? value : "60";
-    static bool RequiresVSync(string fps) => fps is "120" or "uncap";
-
-    void UpdatePresentModeAvailability()
-    {
-        bool required = RequiresVSync(NormalizeFps(ComboTag(FpsCombo, "60")));
-        if (required) SetComboTag(PresentCombo, "Fifo");
-        PresentCombo.IsEnabled = !required;
-        PresentCombo.ToolTip = required ? "120 FPS and Unlimited use FIFO (VSync)." : null;
-        ToolTipService.SetShowOnDisabled(PresentCombo, true);
-    }
 
     static string CameraScale(string? value, double min)
     {
@@ -255,7 +259,6 @@ public partial class MainWindow : Window
         QuickPreset.SelectedIndex = int.TryParse(state.Preset, out int p) ? Math.Clamp(p, 0, 4) : 1;
         SetComboTag(FpsCombo, state.Fps);
         SetQuickFps(state.Fps);
-        UpdatePresentModeAvailability();
 
         SetComboTag(LanguageCombo, state.Language);
         SetComboTag(LiveResolutionCombo, state.LiveResolution);
@@ -285,6 +288,7 @@ public partial class MainWindow : Window
 
         ControllerCombo.SelectedIndex = Math.Clamp(state.GamepadIndex, 0, 3);
         ModsEnabledCheck.IsChecked = state.ModsEnabled;
+        LoadModsList();
         DeveloperModeCheck.IsChecked = state.DeveloperMode;
         DetailedLogsCheck.IsChecked = state.DetailedLogs;
         FrameStatsCheck.IsChecked = state.FrameStats;
@@ -304,7 +308,6 @@ public partial class MainWindow : Window
         state.Preset = ComboTag(PresetCombo, "1");
         state.DlssModel = NormalizeDlssModel(ComboTag(DlssModelCombo, "Auto"));
         state.Fps = NormalizeFps(ComboTag(FpsCombo, "60"));
-        UpdatePresentModeAvailability();
         state.PresentMode = ComboTag(PresentCombo);
         state.Language = ComboTag(LanguageCombo, "1");
         state.LiveResolution = ComboTag(LiveResolutionCombo, "0");
@@ -348,6 +351,7 @@ public partial class MainWindow : Window
         CollectUi();
         Directory.CreateDirectory(Path.Combine(root, "out"));
         WriteSafely(statePath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+        SaveModsList();
         if (!string.IsNullOrWhiteSpace(state.GamePath))
             File.WriteAllText(Path.Combine(root, "out", "game_dir.txt"), state.GamePath);
 
@@ -600,6 +604,7 @@ public partial class MainWindow : Window
             psi.Environment["BB_LANGUAGE"] = state.Language;
             psi.Environment["BB_GAMEPAD_INDEX"] = state.GamepadIndex.ToString();
             psi.Environment["BB_MODS_ENABLED"] = state.ModsEnabled ? "1" : "0";
+            psi.Environment["BB_MODS_DIR"] = modsDir;
             psi.Environment["BB_LOG_FILE"] = logPath;
             psi.Environment["PYTHONUNBUFFERED"] = "1";
             if (!string.IsNullOrEmpty(state.PresentMode)) psi.Environment["BB_PRESENT_MODE"] = state.PresentMode;
@@ -648,10 +653,105 @@ public partial class MainWindow : Window
 
     void Save_Click(object sender, RoutedEventArgs e) => SaveSettings();
 
+    // One switch per folder in mods/ (mods.json "disabled", scripts/mods.py) and one per shadPS4 patch
+    // XML in a mod folder, loose in mods/ or in patches/ (patches.json, scripts/patches.py mod_patches).
+    // A mod's eboot.bin needs no switch of its own: patches.py applies it with the mod.
+    string ModsConfigPath => Path.Combine(root, "mods.json");
+    string PatchesConfigPath => Path.Combine(root, "patches.json");
+    static readonly HashSet<string> BloodborneIds = new() { "CUSA00207", "CUSA00208", "CUSA00900", "CUSA01363", "CUSA03173", "CUSA03023" };
+
+    static JsonObject ReadJson(string path)
+    {
+        try { return JsonNode.Parse(File.ReadAllText(path)) as JsonObject ?? new(); }
+        catch { return new(); }
+    }
+
+    static HashSet<string> JsonNames(JsonObject config, string key) =>
+        (config[key] as JsonArray)?.Select(n => n?.ToString() ?? "").ToHashSet() ?? new();
+
+    // (key, patch name, isEnabled) of the 1.09 eboot patches in dir's XML files, as patches.py external_patches.
+    List<(string Key, string Name, bool Default)> PatchesIn(string dir, SearchOption depth)
+    {
+        var found = new List<(string, string, bool)>();
+        if (!Directory.Exists(dir)) return found;
+        string builtIn = Path.Combine(root, "patches", "Bloodborne.xml");
+        foreach (var file in Directory.GetFiles(dir, "*.xml", depth).Order(StringComparer.OrdinalIgnoreCase))
+        {
+            if (string.Equals(Path.GetFullPath(file), builtIn, StringComparison.OrdinalIgnoreCase)) continue;
+            try
+            {
+                var xml = XDocument.Load(file);
+                var ids = xml.Descendants("ID").Select(e => e.Value.Trim()).ToList();
+                if (ids.Count > 0 && !ids.Any(BloodborneIds.Contains)) continue;
+                foreach (var meta in xml.Descendants("Metadata"))
+                    if ((string?)meta.Attribute("AppVer") == "01.09" && ((string?)meta.Attribute("AppElf") ?? "eboot.bin") == "eboot.bin")
+                        found.Add(($"{Path.GetFileName(file)}/{(string?)meta.Attribute("Name")}", (string?)meta.Attribute("Name") ?? "",
+                                   string.Equals((string?)meta.Attribute("isEnabled"), "true", StringComparison.OrdinalIgnoreCase)));
+            }
+            catch { }  // patches.py reports unreadable files at launch
+        }
+        return found;
+    }
+
+    void LoadModsList()
+    {
+        var disabledMods = JsonNames(ReadJson(ModsConfigPath), "disabled");
+        var patchConfig = ReadJson(PatchesConfigPath);
+        var enabledPatches = JsonNames(patchConfig, "enabled");
+        var disabledPatches = JsonNames(patchConfig, "disabled");
+        // Rebuilt on every visit to the Mods page; switches not saved yet keep their state.
+        var shown = ModsList.Children.OfType<CheckBox>().ToDictionary(c => c.Tag.ToString()!, c => c.IsChecked == true);
+        ModsList.Children.Clear();
+        CheckBox Add(string tag, string label, bool on, double indent, CheckBox? parent = null)
+        {
+            var box = new CheckBox { Content = label, Tag = tag, Margin = new Thickness(indent, 4, 0, 0),
+                                     IsChecked = shown.TryGetValue(tag, out bool current) ? current : on };
+            if (parent != null) box.SetBinding(IsEnabledProperty, new System.Windows.Data.Binding("IsChecked") { Source = parent });
+            ModsList.Children.Add(box);
+            return box;
+        }
+        void AddPatches(IEnumerable<(string Key, string Name, bool Default)> patches, double indent, CheckBox? parent)
+        {
+            foreach (var p in patches)
+                Add("patch:" + p.Key, "Patch: " + p.Name, enabledPatches.Contains(p.Key) || (!disabledPatches.Contains(p.Key) && p.Default), indent, parent);
+        }
+        if (Directory.Exists(modsDir))
+            foreach (var dir in Directory.GetDirectories(modsDir).Order(StringComparer.OrdinalIgnoreCase))
+            {
+                string name = Path.GetFileName(dir);
+                var mod = Add("mod:" + name, File.Exists(Path.Combine(dir, "eboot.bin")) ? name + " (eboot.bin)" : name, !disabledMods.Contains(name), 0);
+                AddPatches(PatchesIn(dir, SearchOption.AllDirectories), 24, mod);
+            }
+        AddPatches(PatchesIn(modsDir, SearchOption.TopDirectoryOnly), 0, null);
+        AddPatches(PatchesIn(Path.Combine(root, "patches"), SearchOption.TopDirectoryOnly), 0, null);
+    }
+
+    void SaveModsList()
+    {
+        var boxes = ModsList.Children.OfType<CheckBox>().Select(c => (Tag: c.Tag.ToString()!, On: c.IsChecked == true)).ToList();
+        if (boxes.Count == 0) return;
+        var mods = ReadJson(ModsConfigPath);
+        mods["disabled"] = new JsonArray(boxes.Where(b => b.Tag.StartsWith("mod:") && !b.On).Select(b => (JsonNode?)b.Tag[4..]).ToArray());
+        WriteSafely(ModsConfigPath, mods.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+        // Patches not shown (their file is gone) keep their entries.
+        var patches = ReadJson(PatchesConfigPath);
+        var enabled = JsonNames(patches, "enabled");
+        var disabled = JsonNames(patches, "disabled");
+        foreach (var (tag, on) in boxes.Where(b => b.Tag.StartsWith("patch:")))
+        {
+            string key = tag[6..];
+            (on ? enabled : disabled).Add(key);
+            (on ? disabled : enabled).Remove(key);
+        }
+        patches["enabled"] = new JsonArray(enabled.Order().Select(k => (JsonNode?)k).ToArray());
+        patches["disabled"] = new JsonArray(disabled.Order().Select(k => (JsonNode?)k).ToArray());
+        WriteSafely(PatchesConfigPath, patches.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+    }
+
 
     void OpenMods_Click(object sender, RoutedEventArgs e)
     {
-        string mods = Path.Combine(root, "mods");
+        string mods = modsDir;
         Directory.CreateDirectory(mods);
         Process.Start(new ProcessStartInfo("explorer.exe", mods) { UseShellExecute = true });
     }
@@ -669,6 +769,7 @@ public partial class MainWindow : Window
         string page = button.CommandParameter?.ToString() ?? "Home";
         foreach (var b in new[] { NavHome, NavGeneral, NavGraphics, NavPerformance, NavController, NavOnline, NavMods, NavAdvanced }) b.Tag = null;
         button.Tag = "active";
+        if (page == "Mods") LoadModsList();
         HomePage.Visibility = page == "Home" ? Visibility.Visible : Visibility.Collapsed;
         SettingsScrim.Visibility = page == "Home" ? Visibility.Collapsed : Visibility.Visible;
         GeneralPage.Visibility = page == "General" ? Visibility.Visible : Visibility.Collapsed;

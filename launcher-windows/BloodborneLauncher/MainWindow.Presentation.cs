@@ -49,7 +49,6 @@ public partial class MainWindow
             QuickPreset.SelectedIndex = PresetCombo.SelectedIndex;
             string fps = ComboTag(FpsCombo);
             SetQuickFps(fps);
-            UpdatePresentModeAvailability();
             FooterFps.Text = $"   |   {(fps == "uncap" ? "Unlimited" : fps + " FPS")}";
         }
         finally { syncing = false; }

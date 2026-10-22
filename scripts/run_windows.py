@@ -214,7 +214,10 @@ def main():
              '--settings', config, '--game-dir', merged, '--render-res', os.environ.get('BB_RENDER_RES', ''),
              '--output-res', os.environ.get('BB_OUTPUT_RES', ''),
              '--patches-dir', os.environ.get('BB_PATCHES_DIR', data / 'patches'),
-             '--patches-config', os.environ.get('BB_PATCHES_CONFIG', data / 'patches.json')])
+             '--patches-config', os.environ.get('BB_PATCHES_CONFIG', data / 'patches.json'),
+             *(['--mods-dir', os.environ.get('BB_MODS_DIR', data / 'mods'),
+                '--mods-config', os.environ.get('BB_MODS_CONFIG', data / 'mods.json')]
+               if os.environ.get('BB_MODS_ENABLED', '1') == '1' else [])])
         probe = ROOT / os.environ.get('BB_PROBE', out / 'bb-probe.exe')
         command = [probe, out / 'boot-linked.bin', '--content-profile', out / 'content.bin',
                    '--patches', out / 'patches.bin', '--app0', merged,
