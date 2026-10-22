@@ -49,6 +49,17 @@ int main(void) {
     void *mapped=NULL;
     assert(direct_allocate(0,POOL_SIZE,length,PAGE,0,&physical)==0);
     assert(direct_map(&mapped,length,3,0,physical,PAGE)==0);
+    MEMORY_BASIC_INFORMATION state;
+    assert(VirtualQuery(backing_base+physical,&state,sizeof(state)) && state.State==MEM_COMMIT);
+    assert(VirtualQuery(backing_base+physical+length,&state,sizeof(state)) && state.State==MEM_RESERVE);
+    assert(win_mem_commit(backing_base+POOL_SIZE+FLEX_SPAN,PAGE)==-1);
+    memset(mapped,0xa5,length);
+    void *alias=NULL;
+    assert(direct_map(&alias,length,3,0,physical,PAGE)==0);
+    assert(((unsigned char*)alias)[length-1]==0xa5);
+    ((unsigned char*)alias)[0]=0x5a;
+    assert(((unsigned char*)mapped)[0]==0x5a);
+    assert(direct_unmap(alias,length)==0);
     invalidations=0;
     // Removing the middle of a Windows section remaps the surviving pieces.
     // Their INVALIDATE notifications used to be discarded together with UNMAP.
@@ -57,6 +68,14 @@ int main(void) {
     assert(invalidations>=2);
 #endif
     assert(pending_count==0);
+    assert(direct_release(physical,length)==0);
+    void *flex=NULL;
+    assert(map_flexible(&flex,PAGE,3,0)==0);
+    memset(flex,0x42,PAGE);
+    assert(((unsigned char*)flex)[PAGE-1]==0x42);
+    assert(direct_unmap(flex,PAGE)==0);
+    assert(direct_allocate(0,POOL_SIZE,length,PAGE,0,&physical)==0);
+    assert(backing_base[physical]==0 && backing_base[physical+length-1]==0);
     assert(direct_release(physical,length)==0);
     free(pending); pending=NULL; pending_capacity=0;
     puts("PASS: 8194 ordered notifications, queue reuse and surviving-view invalidations");
