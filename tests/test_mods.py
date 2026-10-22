@@ -76,13 +76,35 @@ class ModTests(unittest.TestCase):
 
     def test_mod_symlinks_rejected(self):
         a = self.mod('A')
-        (a / 'dvdroot_ps4/escape').symlink_to(self.assets, target_is_directory=True)
+        link = a / 'dvdroot_ps4/escape'
+        try:
+            link.symlink_to(self.assets, target_is_directory=True)
+        except OSError as error:
+            if os.name != 'nt' or error.winerror != 1314: raise
+            import _winapi
+            _winapi.CreateJunction(str(self.assets), str(link))
         with self.assertRaises(ValueError):
             mods.build_overlay(self.game, self.root / 'out', [('A', a)])
 
-    def test_executable_replacement_rejected(self):
+    def test_modified_executable_is_not_mounted(self):
+        # patches.py turns it into patch writes; the game keeps the verified original.
         a = self.mod('A')
-        (a / 'eboot.bin').write_bytes(b'unsupported')
+        (a / 'eboot.bin').write_bytes(b'modified')
+        result = mods.build_overlay(self.game, self.root / 'out', [('A', a)])
+        self.assertEqual((result / 'eboot.bin').read_bytes(), b'original executable')
+
+    def test_executable_or_patch_only_mods_discovered(self):
+        (self.moddir / 'Eboot').mkdir(parents=True)
+        (self.moddir / 'Eboot' / 'eboot.bin').write_bytes(b'modified')
+        (self.moddir / 'Xml' / 'patches').mkdir(parents=True)
+        (self.moddir / 'Xml' / 'patches' / 'fov.xml').write_text('<Patch/>')
+        (self.moddir / 'Empty').mkdir()
+        self.assertEqual(mods.discover(self.moddir), ['Eboot', 'Xml'])
+
+    def test_system_module_replacement_rejected(self):
+        a = self.mod('A')
+        (a / 'sce_module').mkdir()
+        (a / 'sce_module' / 'libc.prx').write_bytes(b'unsupported')
         with self.assertRaises(ValueError):
             mods.build_overlay(self.game, self.root / 'out', [('A', a)])
 
@@ -135,6 +157,7 @@ class ModTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mods.selected(self.moddir, config)
 
+    @unittest.skipIf(os.name == "nt", "Linux run.sh uses POSIX executable scripts; Windows uses run_windows.py")
     def test_run_uses_overlay_propagates_exit_and_cleans_view(self):
         self.mod('A')
         python = self.root / 'python'

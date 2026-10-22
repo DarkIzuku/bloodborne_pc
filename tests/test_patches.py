@@ -164,6 +164,78 @@ class ExternalPatchTests(unittest.TestCase):
         self.assertEqual(external_patches(XML.parent), [])
 
 
+def tiny_elf(code, vaddr=0x1000):
+    """An ELF with one load segment holding `code` at `vaddr`."""
+    header = bytearray(0x100)
+    header[:7] = b'\x7fELF\x02\x01\x01'
+    struct.pack_into('<H', header, 18, 62)
+    struct.pack_into('<H', header, 0x36, 56)
+    struct.pack_into('<Q', header, 0x20, 0x40)
+    struct.pack_into('<H', header, 0x38, 1)
+    struct.pack_into('<IIQQQQQQ', header, 0x40, 1, 5, 0x100, vaddr, vaddr, len(code), len(code), 0x1000)
+    return bytes(header) + code
+
+
+class ModEbootTests(unittest.TestCase):
+    def test_in_place_changes_become_writes(self):
+        code = bytes(0x30000)
+        modified = bytearray(code)
+        modified[5:7] = b'\xaa\xbb'
+        modified[0x1effe:0x1f002] = b'\x01\x02\x03\x04'  # image 0x1fffe: crosses a diff chunk
+        writes = patches.eboot_mod_writes(tiny_elf(code), tiny_elf(bytes(modified)))
+        self.assertEqual(writes, [(0x1005, b'\xaa\xbb'), (0x1fffe, b'\x01\x02'), (0x20000, b'\x03\x04')])
+        self.assertEqual(patches.eboot_mod_writes(tiny_elf(code), tiny_elf(code)), [])
+
+    def test_other_layout_or_format_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'segment layout'):
+            patches.eboot_mod_writes(tiny_elf(bytes(64)), tiny_elf(bytes(65)))
+        with self.assertRaisesRegex(ValueError, 'plaintext'):
+            patches.eboot_mod_writes(tiny_elf(bytes(64)), b'not an executable')
+
+    def test_enabled_mods_contribute_xml_and_eboot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            game, mods = root / 'game', root / 'mods'
+            game.mkdir()
+            (game / 'eboot.bin').write_bytes(tiny_elf(bytes(16)))
+            (mods / 'A' / 'xml').mkdir(parents=True)
+            (mods / 'A' / 'eboot.bin').write_bytes(tiny_elf(b'\x90' + bytes(15)))
+            (mods / 'A' / 'xml' / 'a.xml').write_text(EXTERNAL)
+            (mods / 'B').mkdir()
+            (mods / 'B' / 'b.xml').write_text(EXTERNAL)
+            (mods / 'loose.xml').write_text(EXTERNAL)
+            config = root / 'mods.json'
+            config.write_text('{"disabled": ["B"]}')
+            found, writes = patches.mod_patches(mods, config, '01.09', game, XML)
+            self.assertEqual(sorted({key.split('/')[0] for key, _, _ in found}), ['mods'])
+            self.assertEqual(writes, [(0x1000, b'\x90')])
+
+
+class ModPatchSafetyTests(unittest.TestCase):
+    def test_malformed_program_headers(self):
+        for data in (b"", b"\\x7fELF", tiny_elf(b"a")[:70]):
+            with self.assertRaises(ValueError): patches.eboot_mod_writes(tiny_elf(b"a"), data)
+
+    def test_no_load_segments_and_oversized_address(self):
+        bad=bytearray(tiny_elf(b"a"));struct.pack_into('<I',bad,0x40,0)
+        with self.assertRaises(ValueError): patches.memory_image(bytes(bad))
+        with self.assertRaises(ValueError): patches.memory_image(tiny_elf(b"a",vaddr=512*1024*1024))
+
+    def test_identical_filenames_have_distinct_mod_keys(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d);game=root/'game';game.mkdir()
+            (game/'eboot.bin').write_bytes(tiny_elf(bytes(16)))
+            for name in ('A','B'):
+                folder=root/'mods'/name;folder.mkdir(parents=True)
+                (folder/'same.xml').write_text(EXTERNAL)
+            found,_=patches.mod_patches(root/'mods',None,'01.09',game,XML)
+            self.assertEqual(len({key for key,_,_ in found}),len(found))
+            self.assertEqual({key.split('/')[1] for key,_,_ in found},{'A','B'})
+            key=found[0][0];config=root/'patches.json'
+            config.write_text(__import__('json').dumps({'enabled':[key], 'disabled':[x[0] for x in found if x[0]!=key]}))
+            self.assertEqual([x[0] for x in patches.external_selection(found,config)],[key])
+
+
 class IntelTonemapTests(unittest.TestCase):
     def cpuinfo(self, vendor):
         path = Path(tempfile.mkdtemp()) / 'cpuinfo'

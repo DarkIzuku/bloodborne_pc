@@ -129,7 +129,10 @@ public partial class MainWindow : Window
                 if (File.Exists(remembered)) state.GamePath = File.ReadAllText(remembered).Trim();
             }
         }
-        catch { state = new(); }
+        catch {
+            try { state = JsonSerializer.Deserialize<LauncherState>(File.ReadAllText(statePath + ".bak")) ?? new(); }
+            catch { state = new(); }
+        }
         state.DlssModel = NormalizeDlssModel(ReadIniValue("dlss_preset") ?? state.DlssModel);
         // Normalize malformed frame-rate selections before displaying or launching.
         state.Fps = NormalizeFps(state.Fps);
@@ -270,6 +273,7 @@ public partial class MainWindow : Window
 
         ControllerCombo.SelectedIndex = Math.Clamp(state.GamepadIndex, 0, 3);
         ModsEnabledCheck.IsChecked = state.ModsEnabled;
+        LoadModsList();
         DeveloperModeCheck.IsChecked = state.DeveloperMode;
         DetailedLogsCheck.IsChecked = state.DetailedLogs;
         FrameStatsCheck.IsChecked = state.FrameStats;
@@ -332,7 +336,8 @@ public partial class MainWindow : Window
         {
         CollectUi();
         Directory.CreateDirectory(Path.Combine(root, "out"));
-        File.WriteAllText(statePath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+        WriteSafely(statePath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+        SaveModsList();
         if (!string.IsNullOrWhiteSpace(state.GamePath))
             File.WriteAllText(Path.Combine(root, "out", "game_dir.txt"), state.GamePath);
 
@@ -402,7 +407,18 @@ public partial class MainWindow : Window
         if (lines.Count == 0) lines.Add("# bbport settings - Bloodborne PC Launcher");
         foreach (var kv in values)
             if (!written.Contains(kv.Key)) lines.Add(kv.Key + "=" + kv.Value);
-        File.WriteAllText(path, string.Join("\r\n", lines) + "\r\n");
+        WriteSafely(path, string.Join("\r\n", lines) + "\r\n");
+    }
+
+    static void WriteSafely(string path, string text)
+    {
+        string temp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try {
+            File.WriteAllText(temp, text);
+            if (File.Exists(path)) File.Replace(temp, path, path + ".bak");
+            else File.Move(temp, path);
+        }
+        finally { if (File.Exists(temp)) File.Delete(temp); }
     }
 
     void RefreshStatus()
@@ -650,6 +666,7 @@ public partial class MainWindow : Window
         string page = button.CommandParameter?.ToString() ?? "Home";
         foreach (var b in new[] { NavHome, NavGeneral, NavGraphics, NavPerformance, NavController, NavOnline, NavMods, NavAdvanced }) b.Tag = null;
         button.Tag = "active";
+        if (page == "Mods") LoadModsList();
         HomePage.Visibility = page == "Home" ? Visibility.Visible : Visibility.Collapsed;
         SettingsScrim.Visibility = page == "Home" ? Visibility.Collapsed : Visibility.Visible;
         GeneralPage.Visibility = page == "General" ? Visibility.Visible : Visibility.Collapsed;

@@ -290,6 +290,37 @@ static class Program
             Check(File.ReadAllText(Path.Combine(root,"bbport.ini")).Split('\n').Any(line=>line.Trim()=="dlss_preset="+model),"DLSS model INI "+model);
         }
         Console.WriteLine($"PASS: {assertions} assertions; settings, navigation, all quick options, launch environment and artwork.");
+        // Exercise the actual Mods controls against isolated, colliding XML filenames.
+        string mods = Path.Combine(root, "mods");
+        foreach (string name in new[] { "A", "B" }) {
+            Directory.CreateDirectory(Path.Combine(mods, name));
+            File.WriteAllText(Path.Combine(mods, name, "same.xml"), "<Patch><TitleID><ID>CUSA03173</ID></TitleID><Metadata Name=\"Example\" AppVer=\"01.09\" isEnabled=\"true\"/></Patch>");
+        }
+        File.WriteAllText(Path.Combine(root, "mods.json"), "{\"disabled\":[\"Missing\"],\"order\":[\"B\",\"A\"]}");
+        Call("LoadModsList");
+        var choices=Get<StackPanel>("ModsList").Children.OfType<CheckBox>().ToList();
+        Check(choices.Count == 4, "Two mods and their independent XML switches");
+        choices.Single(c=>c.Tag.ToString()=="mod:A").IsChecked=false;
+        choices.Single(c=>c.Tag.ToString()=="patch:mods/B/same.xml/Example").IsChecked=false;
+        Call("SaveModsList");
+        using(var saved=JsonDocument.Parse(File.ReadAllText(Path.Combine(root,"mods.json")))) {
+            Check(saved.RootElement.GetProperty("disabled").EnumerateArray().Select(x=>x.GetString()).ToHashSet().SetEquals(new[]{"A","Missing"}), "Preserve missing disabled mods");
+            Check(saved.RootElement.GetProperty("order")[0].GetString()=="B", "Preserve mod load order");
+        }
+        using(var saved=JsonDocument.Parse(File.ReadAllText(Path.Combine(root,"patches.json")))) {
+            var disabled=saved.RootElement.GetProperty("disabled").EnumerateArray().Select(x=>x.GetString()).ToHashSet();
+            Check(disabled.Contains("mods/B/same.xml/Example") && !disabled.Contains("mods/A/same.xml/Example"), "Patch filename collisions are independent");
+        }
+        Call("SaveModsList");
+        Check(File.Exists(Path.Combine(root,"mods.json.bak")), "Atomic settings retain a backup");
+        File.WriteAllText(Path.Combine(root,"mods.json"), "{broken");
+        Call("LoadModsList");
+        bool rejected=false;
+        try { Call("SaveModsList"); } catch(TargetInvocationException error) when(error.InnerException is IOException) { rejected=true; }
+        Check(rejected && File.ReadAllText(Path.Combine(root,"mods.json"))=="{broken", "Malformed settings are never overwritten silently");
+        File.WriteAllText(Path.Combine(output,"verification.json"),
+            JsonSerializer.Serialize(new { assertions, mod_controls_verified=true, isolated_fixture=true }));
+        Console.WriteLine("PASS: six additional mod selection, identity, atomic save and malformed-config assertions.");
         window.Close(); app.Shutdown();
     }
 }
