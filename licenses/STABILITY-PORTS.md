@@ -26,3 +26,11 @@ Existing shadPS4 code retains its GPL-2.0-or-later notices. New adaptations are
 GPL-3.0-or-later, compatible with that later-version grant; see GPL-3.0.txt.
 The byte-checked patch table contains isolated instruction sites, not a game
 executable. No original game files or saves are distributed.
+
+* Gerasimos Kanellatos (GerasimosKan), public PRs #3, #4 and #5, October 22:
+  trophies/dependency parity checked, device-aware procedural prompts, Windows
+  demand commit, mod patch selection and atomic settings. Adapted rather than
+  merging unrelated histories; see docs/PR_CONTRIBUTIONS_2026_10_22.md.
+  https://github.com/DarkIzuku/bloodborne_pc/pull/3
+  https://github.com/DarkIzuku/bloodborne_pc/pull/4
+  https://github.com/DarkIzuku/bloodborne_pc/pull/5

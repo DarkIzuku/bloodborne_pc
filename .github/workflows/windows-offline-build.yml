@@ -100,6 +100,8 @@ jobs:
           ninja -C out/gpu frame-pacing-test
           ctest --test-dir out/gpu -R '^frame-pacing' --no-tests=error --output-on-failure
           out/gpu/widescreen-test.exe
+          ninja -C out/gpu button-prompts-test button-prompt-runtime-test
+          ctest --test-dir out/gpu -R "^button-prompt" --no-tests=error --output-on-failure
 
       - name: Verify preparation, patches, and mod safety
         shell: msys2 {0}
@@ -111,6 +113,7 @@ jobs:
           python tests/prepare_cache_smoke.py
           python -m unittest discover -s tests -p 'test_prepare.py'
           python -m unittest discover -s tests -p 'test_patches.py'
+          python -m unittest discover -s tests -p 'test_mods.py'
           python -m unittest discover -s tests -p 'test_game_check.py'
           python -m unittest discover -s tests -p 'test_windows_frame_rate.py'
           python -m unittest discover -s tests -p 'test_high_frame_rate.py'
