@@ -13,6 +13,7 @@
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
 #include "input/input.h"
+#include "engine/button_prompts.h"
 #include "frame_pacing.h"
 
 namespace Frontend {
@@ -163,6 +164,7 @@ bool WindowSDL::PollEvents() {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         BbInput::Event(event,text_active || BbOverlay::CapturesInput());
+        BbPrompts::Event(event);
         if (event.type == SDL_EVENT_MOUSE_MOTION) {
             last_mouse_motion_ms = SDL_GetTicks();
         }

@@ -44,4 +44,7 @@ void SetTextPrompt(bool active, const std::string& prompt, const std::string& te
 /// Any thread: queues the trophy banner (UTF-8 name; grade 1 bronze .. 4 platinum) and its chime.
 void Notify(const std::string& name, int grade);
 
+/// The embedded TTF the menu draws with (also the keyboard prompts', engine/button_prompts.h).
+const unsigned char* FontData();
+
 } // namespace BbOverlay

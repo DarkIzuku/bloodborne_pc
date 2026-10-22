@@ -474,3 +474,16 @@ if(WIN32)
         BB_FPS= BB_FPS_LIMIT=60 BB_VBLANK_HZ=480 BB_PRESENT_MODE=FifoRelaxed
         $<TARGET_FILE:frame-pacing-test> --expect-present Fifo)
 endif()
+
+# Device-aware prompts adapted from public PR #4; no external texture blob.
+add_executable(button-prompts-test EXCLUDE_FROM_ALL ../tests/test_button_prompts.cpp)
+target_include_directories(button-prompts-test PRIVATE shim)
+target_compile_options(button-prompts-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+add_test(NAME button-prompts COMMAND button-prompts-test)
+
+add_executable(button-prompt-runtime-test EXCLUDE_FROM_ALL ../tests/test_button_prompt_runtime.cpp shim/input/bindings.cpp)
+target_include_directories(button-prompt-runtime-test PRIVATE shim shadps4 third_party/imgui)
+target_compile_options(button-prompt-runtime-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_compile_definitions(button-prompt-runtime-test PRIVATE BB_TEST_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf")
+target_link_libraries(button-prompt-runtime-test PRIVATE PkgConfig::SDL3 PkgConfig::XXHASH Boost::headers)
+add_test(NAME button-prompt-runtime COMMAND button-prompt-runtime-test)

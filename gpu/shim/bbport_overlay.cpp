@@ -822,6 +822,10 @@ void TrophyList() {
 
 } // namespace
 
+const unsigned char* FontData() {
+    return bb_font_ttf;
+}
+
 void Notify(const std::string& name, int grade) {
     std::scoped_lock lock{toast_mutex};
     if (toasts.empty()) {
