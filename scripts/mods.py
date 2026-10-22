@@ -42,11 +42,14 @@ def content_root(folder):
         return None
     for wrapper in ('', 'app0', 'CUSA03173'):
         base = child(folder, wrapper) if wrapper else folder
-        if child(base, 'dvdroot_ps4').is_dir() or child(base, 'eboot.bin').is_file():
+        if child(base, 'dvdroot_ps4').is_dir():
             return base, ''
+        if child(base, 'eboot.bin').is_file():
+            bare = any(p.is_dir() and p.name.casefold() in GAME_FOLDERS for p in base.iterdir())
+            return base, 'dvdroot_ps4' if bare else ''
     entries = [e for e in folder.iterdir() if not e.name.startswith('.')]
     folders = [e for e in entries if e.is_dir()]
-    if folders and all(e.name.casefold() in GAME_FOLDERS for e in folders):
+    if any(e.name.casefold() in GAME_FOLDERS for e in folders):
         return folder, 'dvdroot_ps4'
     if len(folders) == 1 and not [e for e in entries if e.is_file() and
                                   e.suffix.casefold() not in ('.txt', '.md', '.jpg', '.png', '.ini')]:
@@ -94,7 +97,13 @@ def mod_files(folder):
                 raise ValueError(f'Mod symlinks are unsupported: {directory / name}')
         for name in sorted(files):
             source = directory / name
-            relative = Path(prefix) / source.relative_to(root) if prefix else source.relative_to(root)
+            local = source.relative_to(root)
+            top = local.parts[0].casefold()
+            if prefix and top not in GAME_FOLDERS:
+                if top in ('sce_module', 'sce_sys'):
+                    raise ValueError(f'Executable/system replacement is unsupported: {source}')
+                continue # executable patches and metadata never become game assets
+            relative = Path(prefix) / local if prefix else local
             # Readme/metadata stay outside the mounted game. This loader handles assets; a
             # modified eboot.bin becomes patch writes (patches.py eboot_mod_writes), the original stays.
             if relative.parts[0].casefold() != 'dvdroot_ps4':

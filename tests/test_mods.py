@@ -101,6 +101,19 @@ class ModTests(unittest.TestCase):
         (self.moddir / 'Empty').mkdir()
         self.assertEqual(mods.discover(self.moddir), ['Eboot', 'Xml'])
 
+    def test_bare_assets_with_executable_and_xml_are_all_preserved(self):
+        folder = self.moddir / 'Combined'
+        (folder / 'chr').mkdir(parents=True)
+        (folder / 'chr/a.dcx').write_bytes(b'combined')
+        (folder / 'eboot.bin').write_bytes(b'patch metadata')
+        (folder / 'xml').mkdir()
+        (folder / 'xml/change.xml').write_text('<Patch/>')
+        result = mods.build_overlay(self.game, self.root / 'out', [('Combined', folder)])
+        self.assertEqual((result / 'dvdroot_ps4/chr/a.dcx').read_bytes(), b'combined')
+        self.assertEqual((result / 'eboot.bin').read_bytes(), b'original executable')
+        self.assertFalse((result / 'dvdroot_ps4/eboot.bin').exists())
+        self.assertFalse((result / 'dvdroot_ps4/xml').exists())
+
     def test_system_module_replacement_rejected(self):
         a = self.mod('A')
         (a / 'sce_module').mkdir()
