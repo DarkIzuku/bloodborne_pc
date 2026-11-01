@@ -95,6 +95,7 @@ public partial class MainWindow : Window
         InitializePresentation();
         LoadHeroImage();
         RefreshStatus();
+        CheckForUpdate();
     }
 
     static string FindProjectRoot()

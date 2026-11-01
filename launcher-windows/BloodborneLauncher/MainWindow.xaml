@@ -217,6 +217,7 @@
                                     </StackPanel>
                                 </Button>
                                 <TextBlock x:Name="PlayHint" Text="Select a valid Bloodborne dump before playing." TextWrapping="Wrap" FontSize="11" Foreground="#BCB2A4" Margin="18,10,10,0" />
+                                <Button x:Name="UpdateButton" Visibility="Collapsed" Click="Update_Click" HorizontalAlignment="Left" Margin="14,10,14,0" Padding="14,6" AutomationProperties.Name="Update to the latest release" ToolTip="Download, verify and install the latest release" />
                             </StackPanel>
                             <ContentControl Grid.Row="1" Style="{StaticResource OrnatePanel}" Padding="18,17,8,18">
                                 <StackPanel>

@@ -289,6 +289,11 @@ static class Program
             Check(Tag("DlssModelCombo")==model,"DLSS model persists "+model);
             Check(File.ReadAllText(Path.Combine(root,"bbport.ini")).Split('\n').Any(line=>line.Trim()=="dlss_preset="+model),"DLSS model INI "+model);
         }
+        Check(Get<Button>("UpdateButton").Visibility==Visibility.Collapsed,"Updater stays offline outside a portable install");
+        var expectedSha=typeof(MainWindow).GetMethod("ExpectedSha256",BindingFlags.Static|BindingFlags.NonPublic)!;
+        string sums="aa11  other.zip\r\nBB22 *Pkg-Windows-x64.zip\n";
+        Check((string?)expectedSha.Invoke(null,new object[]{sums,"Pkg-Windows-x64.zip"})=="BB22","Checksum line found (binary-mode '*', CRLF)");
+        Check(expectedSha.Invoke(null,new object[]{sums,"missing.zip"})==null,"Missing checksum refuses the update");
         Console.WriteLine($"PASS: {assertions} assertions; settings, navigation, all quick options, launch environment and artwork.");
         // Exercise the actual Mods controls against isolated, colliding XML filenames.
         string mods = Path.Combine(root, "mods");
